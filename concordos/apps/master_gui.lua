@@ -136,7 +136,7 @@ local function drawOrders(width)
     ui.text(output, 2, 6, "Заявок пока нет.", colors.lightGray, colors.gray)
     return
   end
-  local first = math.max(1, #data.orders - 3)
+  local first = math.max(1, #data.orders - 2)
   local row = 5
   for index = first, #data.orders do
     local order = data.orders[index]
@@ -260,7 +260,6 @@ while true do
       elseif page == "order" then confirmation = true
       elseif page == "stock" then searchStock()
       end
-    elseif a >= keys.one and a <= keys.four then activateTab(a - keys.one + 1)
     elseif a == keys.f5 then draw()
     end
     draw()
@@ -291,7 +290,7 @@ while true do
           setStatus("ID предмета выбран", colors.lime)
         end
       elseif page == "orders" then
-        local first = math.max(1, #orders.load().orders - 3)
+        local first = math.max(1, #orders.load().orders - 2)
         for index = first, #orders.load().orders do
           local row = 5 + (index - first) * 4
           local order = orders.load().orders[index]

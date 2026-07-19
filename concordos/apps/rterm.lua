@@ -141,7 +141,7 @@ native.setCursorPos(1, 1)
 native.setTextColor(colors.lightBlue)
 sayLine("ConcordOS: русский терминал")
 native.setTextColor(colors.lightGray)
-sayLine("Введите help для справки. Русские строки можно вставлять.")
+sayLine("help — справка, exit — рабочий стол.")
 native.setTextColor(colors.white)
 
 while true do

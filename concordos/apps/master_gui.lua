@@ -9,6 +9,7 @@ local page = "order"
 local activeField = "address"
 local fields = { address = "", item = "", amount = "", search = "" }
 local stockResults = {}
+local clipboardResults = {}
 local confirmation = false
 local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
@@ -40,18 +41,24 @@ local function formatQuantity(count)
   return tostring(count)
 end
 
-local function itemName(item)
+local function itemName(item, fallback)
   if type(item) ~= "table" then return nil end
-  return item.name or item.id or (type(item.item) == "table" and item.item.name)
+  return item.name or item.id or (type(item.item) == "table" and (item.item.name or item.item.id))
+    or (type(fallback) == "string" and fallback:find(":") and fallback)
 end
 
 local function itemCount(item)
+  if type(item) == "number" then return item end
   if type(item) ~= "table" then return 0 end
   return tonumber(item.count or item.amount or item.quantity or item.total) or 0
 end
 
 local function getTicker()
   return peripheral.find("Create_StockTicker")
+end
+
+local function getClipboard()
+  return peripheral.find("create:clipboard")
 end
 
 local function availableCount(name)
@@ -73,8 +80,16 @@ local function inputBox(x, y, width, label, value, selected)
   ui.line(output, x, y + 1, width, ru.fit(value .. suffix, width, ""), colors.white, background)
 end
 
+local function homeButton(width)
+  local buttonWidth = width >= 40 and 11 or 3
+  return width - buttonWidth + 1, buttonWidth, buttonWidth == 3 and "<" or "< Главная"
+end
+
 local function drawHeader(width)
   ui.line(output, 1, 1, width, "ConcordOS | Мастер промзоны", colors.white, colors.blue)
+  local homeX, homeWidth, homeLabel = homeButton(width)
+  ui.button(output, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
+  ui.text(output, homeX, 1, homeLabel, colors.white, colors.lightBlue)
   local tabWidth = math.max(10, math.floor(width / #tabs))
   for index, tab in ipairs(tabs) do
     local x = 1 + (index - 1) * tabWidth
@@ -87,7 +102,7 @@ local function drawOrder(width)
   inputBox(2, 6, width - 3, "Адрес доставки", fields.address, activeField == "address")
   inputBox(2, 9, width - 3, "ID предмета", fields.item, activeField == "item")
   inputBox(2, 12, width - 3, "Количество: 448 или 7с", fields.amount, activeField == "amount")
-  ui.button(output, 2, 15, math.floor((width - 3) / 2), 2, "Найти предмет", colors.white, colors.purple, false)
+  ui.button(output, 2, 15, math.floor((width - 3) / 2), 2, "Из блокнота", colors.white, colors.purple, false)
   ui.button(output, 3 + math.floor((width - 3) / 2), 15, width - 3 - math.floor((width - 3) / 2), 2, "Создать заявку", colors.white, colors.red, false)
 end
 
@@ -121,6 +136,50 @@ local function drawStock(width)
     local label = tostring(item.displayName or itemName(item) or "?") .. " x" .. tostring(itemCount(item))
     ui.line(output, 2, y, width - 3, ru.fit(tostring(index) .. ". " .. label, width - 3, ""), colors.white, index % 2 == 0 and colors.gray or colors.black)
   end
+end
+
+local function readClipboard()
+  local clipboard = getClipboard()
+  if not clipboard then setStatus("Планшет Create не найден", colors.red) return false end
+
+  local ok, raw = pcall(clipboard.getMissingItems)
+  if not ok or type(raw) ~= "table" then
+    setStatus("Не удалось прочитать блокнот", colors.red)
+    return false
+  end
+
+  clipboardResults = {}
+  for key, entry in pairs(raw) do
+    local name = itemName(entry, key)
+    local count = itemCount(entry)
+    if name and count > 0 then
+      clipboardResults[#clipboardResults + 1] = {
+        name = name,
+        count = count,
+        displayName = type(entry) == "table" and entry.displayName or nil,
+      }
+    end
+  end
+  table.sort(clipboardResults, function(a, b)
+    return tostring(a.displayName or a.name) < tostring(b.displayName or b.name)
+  end)
+  setStatus(#clipboardResults == 0 and "В блокноте нет недостающих предметов" or ("Считано позиций: " .. tostring(#clipboardResults)), colors.lightGray)
+  return true
+end
+
+local function drawClipboard(width)
+  ui.text(output, 2, 5, "Недостающие материалы из планшета Create", colors.lightGray, colors.gray)
+  ui.button(output, 2, 6, width - 3, 1, "Считать блокнот", colors.white, colors.purple, false)
+  if #clipboardResults == 0 then
+    ui.text(output, 2, 8, "Нажми «Считать блокнот», затем выбери позицию.", colors.lightGray, colors.gray)
+    return
+  end
+  for index = 1, math.min(7, #clipboardResults) do
+    local item = clipboardResults[index]
+    local label = tostring(item.displayName or item.name) .. " x" .. formatQuantity(item.count)
+    ui.line(output, 2, 7 + index, width - 3, ru.fit(tostring(index) .. ". " .. label, width - 3, ""), colors.white, index % 2 == 0 and colors.gray or colors.black)
+  end
+  if #clipboardResults > 7 then ui.text(output, 2, 16, "Показаны первые 7 позиций.", colors.lightGray, colors.gray) end
 end
 
 local function orderBar(order)
@@ -182,6 +241,7 @@ local function draw()
   if confirmation then drawConfirmation(width)
   elseif page == "order" then drawOrder(width)
   elseif page == "stock" then drawStock(width)
+  elseif page == "clipboard" then drawClipboard(width)
   elseif page == "orders" then drawOrders(width)
   elseif page == "network" then drawNetwork(width)
   end
@@ -265,6 +325,10 @@ while true do
     draw()
   elseif event == "mouse_click" then
     local x, y = b, c
+    if not confirmation and y == 1 then
+      local homeX, homeWidth = homeButton(width)
+      if x >= homeX and x < homeX + homeWidth then return end
+    end
     if confirmation then
       if y >= 14 and y <= 15 then
         local split = 3 + math.floor((width - 7) / 2)
@@ -278,7 +342,12 @@ while true do
       if field then activeField = field
       elseif page == "order" and y >= 15 and y <= 16 then
         local leftWidth = math.floor((width - 3) / 2)
-        if x < 3 + leftWidth then page, activeField = "stock", "search" else confirmation = true end
+        if x < 3 + leftWidth then
+          page, activeField = "clipboard", nil
+          readClipboard()
+        else
+          confirmation = true
+        end
       elseif page == "stock" and y == 8 then
         searchStock()
       elseif page == "stock" and y >= 10 and y <= 16 then
@@ -288,6 +357,16 @@ while true do
           fields.item = itemName(item) or ""
           page, activeField = "order", "amount"
           setStatus("ID предмета выбран", colors.lime)
+        end
+      elseif page == "clipboard" and y == 6 then
+        readClipboard()
+      elseif page == "clipboard" and y >= 8 and y <= 14 then
+        local item = clipboardResults[y - 7]
+        if item then
+          fields.item = item.name
+          fields.amount = tostring(item.count)
+          page, activeField = "order", "address"
+          setStatus("Предмет и количество перенесены в постоянную заявку", colors.lime)
         end
       elseif page == "orders" then
         local first = math.max(1, #orders.load().orders - 2)

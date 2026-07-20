@@ -48,6 +48,16 @@ local function validLua(path, content)
   return chunk ~= nil, err
 end
 
+local function localVersion()
+  local path = "/concordos/system/config.lua"
+  if not fs.exists(path) then return nil end
+  local file = fs.open(path, "r")
+  if not file then return nil end
+  local content = file.readAll()
+  file.close()
+  return content:match("version%s*=%s*[\"']([^\"']+)[\"']")
+end
+
 local function runUpdate()
   sayLine("ConcordOS: проверка обновлений")
   local manifestText, manifestError = readRemote(BASE_URL .. "/manifest.lua")
@@ -55,6 +65,17 @@ local function runUpdate()
 
   local manifest, parseError = loadManifest(manifestText)
   if not manifest then return false, "Ошибка манифеста: " .. tostring(parseError) end
+
+  local installedVersion = localVersion()
+  if installedVersion and manifest.version and tostring(installedVersion) == tostring(manifest.version) then
+    return true, "ConcordOS уже актуальна: версия " .. tostring(installedVersion) .. ". Ничего не скачивалось.", false
+  end
+
+  if installedVersion then
+    sayLine("Установлена " .. tostring(installedVersion) .. ", доступна " .. tostring(manifest.version) .. ".")
+  else
+    sayLine("Локальная версия не определена; выполняется проверочное обновление.")
+  end
 
   local downloads = {}
   for index, entry in ipairs(manifest.files) do
@@ -80,7 +101,7 @@ local function runUpdate()
     fs.move(temporary, file.target)
   end
 
-  return true, "ConcordOS обновлён до " .. tostring(manifest.version) .. "."
+  return true, "ConcordOS обновлён до " .. tostring(manifest.version) .. ".", true
 end
 
 local function waitForUser()
@@ -97,7 +118,7 @@ output.setTextColor(colors.white)
 output.clear()
 output.setCursorPos(1, 1)
 
-local ran, success, message = pcall(runUpdate)
+local ran, success, message, changed = pcall(runUpdate)
 if not ran then
   output.setTextColor(colors.red)
   sayLine("Внутренняя ошибка обновления: " .. tostring(success))
@@ -107,8 +128,10 @@ elseif not success then
 else
   output.setTextColor(colors.lime)
   sayLine(message)
-  output.setTextColor(colors.lightGray)
-  sayLine("Заявки и данные не затрагивались. Затем выполни reboot.")
+  if changed then
+    output.setTextColor(colors.lightGray)
+    sayLine("Заявки и данные не затрагивались. Затем выполни reboot.")
+  end
 end
 output.setTextColor(colors.white)
 waitForUser()

@@ -34,8 +34,8 @@ while true do
     protocol = PROTOCOL,
     node = os.getComputerID(),
     lines = ok and lines or {},
-    error = ok and nil or tostring(lines),
   }
+  if not ok then message.error = tostring(lines) end
   modem.transmit(CHANNEL, CHANNEL, message)
   sleep(1)
 end

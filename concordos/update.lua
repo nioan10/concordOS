@@ -1,5 +1,15 @@
 -- ConcordOS online updater. It deliberately never writes /concordos/data.
 local BASE_URL = "https://raw.githubusercontent.com/nioan10/concordOS/main/concordos"
+local ru = dofile("/concordos/system/lib/ru.lua")
+local output = term.current()
+
+local function sayLine(value)
+  ru.print(output, value)
+end
+
+local function say(value)
+  ru.write(output, value)
+end
 
 local function readRemote(url)
   if not http then return nil, "HTTP отключён в настройках CC:Tweaked" end
@@ -28,42 +38,77 @@ local function loadManifest(content)
   return manifest
 end
 
+local function safeTarget(path)
+  return path == "/startup" or path == "/update" or path:sub(1, 11) == "/concordos/"
+end
+
 local function validLua(path, content)
   if path:sub(-4) ~= ".lua" and path ~= "/startup" and path ~= "/update" then return true end
   local chunk, err = load(content, "=" .. path, "t", {})
   return chunk ~= nil, err
 end
 
-print("ConcordOS: проверка обновлений...")
-local manifestText, manifestError = readRemote(BASE_URL .. "/manifest.lua")
-if not manifestText then error("Не удалось получить манифест: " .. manifestError, 0) end
+local function runUpdate()
+  sayLine("ConcordOS: проверка обновлений")
+  local manifestText, manifestError = readRemote(BASE_URL .. "/manifest.lua")
+  if not manifestText then return false, "Не удалось получить манифест: " .. manifestError end
 
-local manifest, parseError = loadManifest(manifestText)
-if not manifest then error("Ошибка манифеста: " .. tostring(parseError), 0) end
+  local manifest, parseError = loadManifest(manifestText)
+  if not manifest then return false, "Ошибка манифеста: " .. tostring(parseError) end
 
-local downloads = {}
-for index, entry in ipairs(manifest.files) do
-  if type(entry) ~= "table" or type(entry.source) ~= "string" or type(entry.target) ~= "string" then
-    error("Некорректная запись манифеста №" .. tostring(index), 0)
+  local downloads = {}
+  for index, entry in ipairs(manifest.files) do
+    if type(entry) ~= "table" or type(entry.source) ~= "string" or type(entry.target) ~= "string" or not safeTarget(entry.target) then
+      return false, "Некорректная запись манифеста №" .. tostring(index)
+    end
+    say("Скачивание " .. entry.source .. "... ")
+    local content, err = readRemote(BASE_URL .. "/" .. entry.source)
+    if not content then return false, "Ошибка загрузки " .. entry.source .. ": " .. tostring(err) end
+    local valid, syntaxError = validLua(entry.target, content)
+    if not valid then return false, "Ошибка синтаксиса " .. entry.source .. ": " .. tostring(syntaxError) end
+    downloads[#downloads + 1] = { target = entry.target, content = content }
+    sayLine("готово")
   end
-  write("Скачивание " .. entry.source .. "... ")
-  local content, err = readRemote(BASE_URL .. "/" .. entry.source)
-  if not content then error("ошибка: " .. tostring(err), 0) end
-  local valid, syntaxError = validLua(entry.target, content)
-  if not valid then error("синтаксис " .. entry.source .. ": " .. tostring(syntaxError), 0) end
-  downloads[#downloads + 1] = { target = entry.target, content = content }
-  print("готово")
+
+  for _, file in ipairs(downloads) do
+    local temporary = file.target .. ".new"
+    local backup = file.target .. ".bak"
+    if fs.exists(temporary) then fs.delete(temporary) end
+    writeFile(temporary, file.content)
+    if fs.exists(file.target) and not fs.exists(backup) then fs.copy(file.target, backup) end
+    if fs.exists(file.target) then fs.delete(file.target) end
+    fs.move(temporary, file.target)
+  end
+
+  return true, "ConcordOS обновлён до " .. tostring(manifest.version) .. "."
 end
 
-for _, file in ipairs(downloads) do
-  local temporary = file.target .. ".new"
-  local backup = file.target .. ".bak"
-  if fs.exists(temporary) then fs.delete(temporary) end
-  writeFile(temporary, file.content)
-  if fs.exists(file.target) and not fs.exists(backup) then fs.copy(file.target, backup) end
-  if fs.exists(file.target) then fs.delete(file.target) end
-  fs.move(temporary, file.target)
+local function waitForUser()
+  sayLine("")
+  sayLine("Нажми любую клавишу или кликни для возврата.")
+  while true do
+    local event = os.pullEventRaw()
+    if event == "key" or event == "mouse_click" or event == "monitor_touch" or event == "terminate" then return end
+  end
 end
 
-print("ConcordOS обновлён до " .. tostring(manifest.version) .. ".")
-print("Заявки и данные не затрагивались. Выполни reboot.")
+output.setBackgroundColor(colors.black)
+output.setTextColor(colors.white)
+output.clear()
+output.setCursorPos(1, 1)
+
+local ran, success, message = pcall(runUpdate)
+if not ran then
+  output.setTextColor(colors.red)
+  sayLine("Внутренняя ошибка обновления: " .. tostring(success))
+elseif not success then
+  output.setTextColor(colors.red)
+  sayLine(message)
+else
+  output.setTextColor(colors.lime)
+  sayLine(message)
+  output.setTextColor(colors.lightGray)
+  sayLine("Заявки и данные не затрагивались. Затем выполни reboot.")
+end
+output.setTextColor(colors.white)
+waitForUser()

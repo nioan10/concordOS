@@ -8,7 +8,9 @@ local output = term.current()
 local page = "order"
 local activeField = "address"
 local fields = { address = "", item = "", amount = "", search = "" }
-local stockResults = {}
+local catalogResults = {}
+local catalogPage = 0
+local CATALOG_PAGE_SIZE = 5
 local clipboardResults = {}
 local confirmation = false
 local statusText, statusColor = "Готово к работе", colors.lightGray
@@ -17,7 +19,7 @@ local refreshTimer = nil
 local tabs = {
   { id = "order", label = "Заказать" },
   { id = "orders", label = "Заявки" },
-  { id = "stock", label = "Склад" },
+  { id = "stock", label = "Каталог" },
   { id = "network", label = "Сеть" },
 }
 
@@ -106,36 +108,50 @@ local function drawOrder(width)
   ui.button(output, 3 + math.floor((width - 3) / 2), 15, width - 3 - math.floor((width - 3) / 2), 2, "Создать заявку", colors.white, colors.red, false)
 end
 
-local function searchStock()
-  local query = ru.lower(fields.search)
-  if query == "" then setStatus("Введи часть ID или названия", colors.orange) return end
+local function loadCatalog()
   local ticker = getTicker()
   if not ticker then setStatus("Stock Ticker не найден", colors.red) return end
   local ok, stock = pcall(ticker.stock, true)
   if not ok or type(stock) ~= "table" then setStatus("Не удалось прочитать склад", colors.red) return end
-  stockResults = {}
+
+  local query = ru.lower(fields.search)
+  catalogResults = {}
   for _, item in ipairs(stock) do
     local id, title = tostring(itemName(item) or ""), tostring(item.displayName or "")
-    if ru.lower(id):find(query, 1, true) or ru.lower(title):find(query, 1, true) then
-      stockResults[#stockResults + 1] = item
-      if #stockResults >= 7 then break end
+    if itemCount(item) > 0 and (query == "" or ru.lower(id):find(query, 1, true) or ru.lower(title):find(query, 1, true)) then
+      catalogResults[#catalogResults + 1] = item
     end
   end
-  setStatus(#stockResults == 0 and "Ничего не найдено" or ("Найдено: " .. tostring(#stockResults)), colors.lightGray)
+  table.sort(catalogResults, function(a, b)
+    return tostring(a.displayName or itemName(a) or "") < tostring(b.displayName or itemName(b) or "")
+  end)
+  catalogPage = 0
+  setStatus(#catalogResults == 0 and "На складе ничего не найдено" or ("В каталоге: " .. tostring(#catalogResults)), colors.lightGray)
 end
 
 local function drawStock(width)
-  inputBox(2, 5, width - 3, "Поиск ID или названия", fields.search, activeField == "search")
-  ui.button(output, 2, 8, width - 3, 1, "Искать", colors.white, colors.purple, false)
-  if #stockResults == 0 then
-    ui.text(output, 2, 10, "Выбери результат — ID подставится в заявку.", colors.lightGray, colors.gray)
+  inputBox(2, 5, width - 3, "Поиск по ID или названию (пусто — весь склад)", fields.search, activeField == "search")
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, 8, leftWidth, 1, "Искать", colors.white, colors.purple, false)
+  ui.button(output, 3 + leftWidth, 8, width - 3 - leftWidth, 1, "Обновить склад", colors.white, colors.blue, false)
+  if #catalogResults == 0 then
+    ui.text(output, 2, 10, "Нажми «Искать» для чтения склада.", colors.lightGray, colors.gray)
     return
   end
-  for index, item in ipairs(stockResults) do
-    local y = 9 + index
-    local label = tostring(item.displayName or itemName(item) or "?") .. " x" .. tostring(itemCount(item))
-    ui.line(output, 2, y, width - 3, ru.fit(tostring(index) .. ". " .. label, width - 3, ""), colors.white, index % 2 == 0 and colors.gray or colors.black)
+
+  local totalPages = math.max(1, math.ceil(#catalogResults / CATALOG_PAGE_SIZE))
+  if catalogPage >= totalPages then catalogPage = totalPages - 1 end
+  local first = catalogPage * CATALOG_PAGE_SIZE + 1
+  ui.text(output, 2, 10, "Клик по позиции — создать заявку. Стр. " .. tostring(catalogPage + 1) .. "/" .. tostring(totalPages), colors.lightGray, colors.gray)
+  for offset = 0, CATALOG_PAGE_SIZE - 1 do
+    local item = catalogResults[first + offset]
+    if item then
+      local label = tostring(item.displayName or itemName(item) or "?") .. " x" .. formatQuantity(itemCount(item))
+      ui.line(output, 2, 11 + offset, width - 3, ru.fit(label, width - 3, ""), colors.white, offset % 2 == 0 and colors.gray or colors.black)
+    end
   end
+  ui.button(output, 2, 17, leftWidth, 1, "< Пред.", colors.white, colors.gray, catalogPage > 0)
+  ui.button(output, 3 + leftWidth, 17, width - 3 - leftWidth, 1, "След. >", colors.white, colors.gray, catalogPage < totalPages - 1)
 end
 
 local function readClipboard()
@@ -293,6 +309,7 @@ local function activateTab(index)
   if tab then
     page, confirmation = tab.id, false
     activeField = page == "stock" and "search" or "address"
+    if page == "stock" then loadCatalog() end
   end
 end
 
@@ -318,7 +335,7 @@ while true do
     elseif a == keys.enter then
       if confirmation then submitOrder()
       elseif page == "order" then confirmation = true
-      elseif page == "stock" then searchStock()
+      elseif page == "stock" then loadCatalog()
       end
     elseif a == keys.f5 then draw()
     end
@@ -349,14 +366,22 @@ while true do
           confirmation = true
         end
       elseif page == "stock" and y == 8 then
-        searchStock()
-      elseif page == "stock" and y >= 10 and y <= 16 then
-        local index = y - 9
-        local item = stockResults[index]
+        loadCatalog()
+      elseif page == "stock" and y >= 11 and y <= 15 then
+        local item = catalogResults[catalogPage * CATALOG_PAGE_SIZE + y - 10]
         if item then
           fields.item = itemName(item) or ""
-          page, activeField = "order", "amount"
-          setStatus("ID предмета выбран", colors.lime)
+          if fields.amount == "" then fields.amount = "64" end
+          page, activeField = "order", "address"
+          setStatus("Предмет добавлен в постоянную заявку", colors.lime)
+        end
+      elseif page == "stock" and y == 17 then
+        local totalPages = math.max(1, math.ceil(#catalogResults / CATALOG_PAGE_SIZE))
+        local leftWidth = math.floor((width - 3) / 2)
+        if x < 3 + leftWidth then
+          catalogPage = math.max(0, catalogPage - 1)
+        else
+          catalogPage = math.min(totalPages - 1, catalogPage + 1)
         end
       elseif page == "clipboard" and y == 6 then
         readClipboard()

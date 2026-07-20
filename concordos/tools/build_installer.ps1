@@ -5,6 +5,7 @@ param(
 
 $files = @(
     @{ Source = 'startup.lua'; Destination = '/startup' },
+    @{ Source = 'update.lua'; Destination = '/update' },
     @{ Source = 'apps/rterm.lua'; Destination = '/concordos/apps/rterm.lua' },
     @{ Source = 'apps/master.lua'; Destination = '/concordos/apps/master.lua' },
     @{ Source = 'apps/master_gui.lua'; Destination = '/concordos/apps/master_gui.lua' },

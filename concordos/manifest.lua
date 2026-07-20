@@ -1,12 +1,13 @@
 -- Public ConcordOS update manifest. Served directly from the main branch.
 return {
-  version = "0.4.0",
+  version = "0.4.1",
   files = {
     { source = "startup.lua", target = "/startup" },
     { source = "update.lua", target = "/update" },
     { source = "apps/rterm.lua", target = "/concordos/apps/rterm.lua" },
     { source = "apps/master.lua", target = "/concordos/apps/master.lua" },
     { source = "apps/master_gui.lua", target = "/concordos/apps/master_gui.lua" },
+    { source = "apps/mines.lua", target = "/concordos/apps/mines.lua" },
     { source = "system/config.lua", target = "/concordos/system/config.lua" },
     { source = "system/boot.lua", target = "/concordos/system/boot.lua" },
     { source = "system/desktop.lua", target = "/concordos/system/desktop.lua" },

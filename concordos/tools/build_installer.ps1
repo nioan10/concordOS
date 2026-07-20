@@ -9,6 +9,7 @@ $files = @(
     @{ Source = 'apps/rterm.lua'; Destination = '/concordos/apps/rterm.lua' },
     @{ Source = 'apps/master.lua'; Destination = '/concordos/apps/master.lua' },
     @{ Source = 'apps/master_gui.lua'; Destination = '/concordos/apps/master_gui.lua' },
+    @{ Source = 'apps/mines.lua'; Destination = '/concordos/apps/mines.lua' },
     @{ Source = 'system/config.lua'; Destination = '/concordos/system/config.lua' },
     @{ Source = 'system/boot.lua'; Destination = '/concordos/system/boot.lua' },
     @{ Source = 'system/desktop.lua'; Destination = '/concordos/system/desktop.lua' },

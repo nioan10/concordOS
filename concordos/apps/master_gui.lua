@@ -101,11 +101,28 @@ end
 
 local function drawOrder(width)
   ui.text(output, 2, 5, "Постоянная заявка: сеть сама дозаказывает остаток.", colors.lightGray, colors.gray)
-  inputBox(2, 6, width - 3, "Адрес доставки", fields.address, activeField == "address")
+  inputBox(2, 6, width - 13, "Адрес доставки", fields.address, activeField == "address")
+  ui.button(output, width - 9, 6, 9, 2, "Адреса", colors.white, colors.blue, false)
   inputBox(2, 9, width - 3, "ID предмета", fields.item, activeField == "item")
   inputBox(2, 12, width - 3, "Количество: 448 или 7с", fields.amount, activeField == "amount")
   ui.button(output, 2, 15, math.floor((width - 3) / 2), 2, "Из блокнота", colors.white, colors.purple, false)
   ui.button(output, 3 + math.floor((width - 3) / 2), 15, width - 3 - math.floor((width - 3) / 2), 2, "Создать заявку", colors.white, colors.red, false)
+end
+
+local function drawAddresses(width)
+  local addresses = orders.addresses()
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.text(output, 2, 5, "Адресная книга: клик подставит адрес в заявку.", colors.lightGray, colors.gray)
+  ui.button(output, 2, 6, leftWidth, 1, "< К заявке", colors.white, colors.gray, false)
+  ui.button(output, 3 + leftWidth, 6, width - 3 - leftWidth, 1, "Сохранить текущий", colors.white, colors.blue, false)
+  if #addresses == 0 then
+    ui.text(output, 2, 9, "Адресов пока нет. Введи адрес в заявке и сохрани его.", colors.lightGray, colors.gray)
+    return
+  end
+  for index = 1, math.min(7, #addresses) do
+    ui.line(output, 2, 7 + index, width - 3, ru.fit(tostring(index) .. ". " .. addresses[index], width - 3, ""), colors.white, index % 2 == 0 and colors.gray or colors.black)
+  end
+  if #addresses > 7 then ui.text(output, 2, 16, "Показаны 7 последних адресов.", colors.lightGray, colors.gray) end
 end
 
 local function loadCatalog()
@@ -256,6 +273,7 @@ local function draw()
   drawHeader(width)
   if confirmation then drawConfirmation(width)
   elseif page == "order" then drawOrder(width)
+  elseif page == "addresses" then drawAddresses(width)
   elseif page == "stock" then drawStock(width)
   elseif page == "clipboard" then drawClipboard(width)
   elseif page == "orders" then drawOrders(width)
@@ -284,7 +302,7 @@ local function submitOrder()
 end
 
 local function fieldAt(x, y, width)
-  if page == "order" and x >= 2 and x < width - 1 then
+  if page == "order" and x >= 2 and x < width - 11 then
     if y == 7 then return "address" end
     if y == 10 then return "item" end
     if y == 13 then return "amount" end
@@ -364,6 +382,25 @@ while true do
           readClipboard()
         else
           confirmation = true
+        end
+      elseif page == "order" and x >= width - 9 and y >= 6 and y <= 7 then
+        page, activeField = "addresses", nil
+      elseif page == "addresses" and y == 6 then
+        local leftWidth = math.floor((width - 3) / 2)
+        if x < 3 + leftWidth then
+          page, activeField = "order", "address"
+        elseif fields.address == "" then
+          setStatus("Сначала введи адрес доставки", colors.orange)
+        else
+          orders.rememberAddress(fields.address)
+          setStatus("Адрес сохранён в книге", colors.lime)
+        end
+      elseif page == "addresses" and y >= 8 and y <= 14 then
+        local address = orders.addresses()[y - 7]
+        if address then
+          fields.address = address
+          page, activeField = "order", "item"
+          setStatus("Адрес выбран", colors.lime)
         end
       elseif page == "stock" and y == 8 then
         loadCatalog()

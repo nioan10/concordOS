@@ -919,6 +919,8 @@ local catalogResults = {}
 local catalogPage = 0
 local CATALOG_PAGE_SIZE = 5
 local clipboardResults = {}
+local clipboardPage = 0
+local CLIPBOARD_PAGE_SIZE = 7
 local confirmation = false
 local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
@@ -1103,6 +1105,7 @@ local function readClipboard()
   table.sort(clipboardResults, function(a, b)
     return tostring(a.displayName or a.name) < tostring(b.displayName or b.name)
   end)
+  clipboardPage = 0
   setStatus(#clipboardResults == 0 and "В блокноте нет недостающих предметов" or ("Считано позиций: " .. tostring(#clipboardResults)), colors.lightGray)
   return true
 end
@@ -1114,12 +1117,20 @@ local function drawClipboard(width)
     ui.text(output, 2, 8, "Нажми «Считать блокнот», затем выбери позицию.", colors.lightGray, colors.gray)
     return
   end
-  for index = 1, math.min(7, #clipboardResults) do
-    local item = clipboardResults[index]
-    local label = tostring(item.displayName or item.name) .. " x" .. formatQuantity(item.count)
-    ui.line(output, 2, 7 + index, width - 3, ru.fit(tostring(index) .. ". " .. label, width - 3, ""), colors.white, index % 2 == 0 and colors.gray or colors.black)
+  local totalPages = math.max(1, math.ceil(#clipboardResults / CLIPBOARD_PAGE_SIZE))
+  if clipboardPage >= totalPages then clipboardPage = totalPages - 1 end
+  local first = clipboardPage * CLIPBOARD_PAGE_SIZE + 1
+  ui.text(output, 2, 7, "Клик по позиции — создать заявку. Стр. " .. tostring(clipboardPage + 1) .. "/" .. tostring(totalPages), colors.lightGray, colors.gray)
+  for offset = 0, CLIPBOARD_PAGE_SIZE - 1 do
+    local item = clipboardResults[first + offset]
+    if item then
+      local label = tostring(item.displayName or item.name) .. " x" .. formatQuantity(item.count)
+      ui.line(output, 2, 8 + offset, width - 3, ru.fit(label, width - 3, ""), colors.white, offset % 2 == 0 and colors.gray or colors.black)
+    end
   end
-  if #clipboardResults > 7 then ui.text(output, 2, 16, "Показаны первые 7 позиций.", colors.lightGray, colors.gray) end
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, 16, leftWidth, 1, "< Пред.", colors.white, colors.gray, clipboardPage > 0)
+  ui.button(output, 3 + leftWidth, 16, width - 3 - leftWidth, 1, "След. >", colors.white, colors.gray, clipboardPage < totalPages - 1)
 end
 
 local function orderBar(order)
@@ -1330,12 +1341,20 @@ while true do
       elseif page == "clipboard" and y == 6 then
         readClipboard()
       elseif page == "clipboard" and y >= 8 and y <= 14 then
-        local item = clipboardResults[y - 7]
+        local item = clipboardResults[clipboardPage * CLIPBOARD_PAGE_SIZE + y - 7]
         if item then
           fields.item = item.name
           fields.amount = tostring(item.count)
           page, activeField = "order", "address"
           setStatus("Предмет и количество перенесены в постоянную заявку", colors.lime)
+        end
+      elseif page == "clipboard" and y == 16 then
+        local totalPages = math.max(1, math.ceil(#clipboardResults / CLIPBOARD_PAGE_SIZE))
+        local leftWidth = math.floor((width - 3) / 2)
+        if x < 3 + leftWidth then
+          clipboardPage = math.max(0, clipboardPage - 1)
+        else
+          clipboardPage = math.min(totalPages - 1, clipboardPage + 1)
         end
       elseif page == "orders" then
         local first = math.max(1, #orders.load().orders - 2)
@@ -1358,7 +1377,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.3.2",
+  version = "0.3.3",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

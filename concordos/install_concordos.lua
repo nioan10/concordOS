@@ -1507,7 +1507,12 @@ local monitorName = monitor and peripheral.getName(monitor) or nil
 local outputs = { computer }
 if monitor then outputs[#outputs + 1] = monitor end
 
-local ROWS, COLS, MINES = 9, 9, 10
+local difficulties = {
+  { title = "Лёгкая", short = "Лёгк.", rows = 9, cols = 9, mines = 10 },
+  { title = "Средняя", short = "Сред.", rows = 12, cols = 12, mines = 24 },
+  { title = "Сложная", short = "Слож.", rows = 16, cols = 16, mines = 48 },
+}
+local difficulty = 1
 local board = {}
 local initialized, lost, won = false, false, false
 local cursorRow, cursorCol = 1, 1
@@ -1518,15 +1523,21 @@ local numberColors = {
   [7] = colors.black, [8] = colors.gray,
 }
 
+local function settings()
+  return difficulties[difficulty]
+end
+
 local function cell(row, col)
   return board[row] and board[row][col]
 end
 
 local function reset()
+  local level = settings()
   board, initialized, lost, won = {}, false, false, false
-  for row = 1, ROWS do
+  cursorRow, cursorCol = 1, 1
+  for row = 1, level.rows do
     board[row] = {}
-    for col = 1, COLS do
+    for col = 1, level.cols do
       board[row][col] = { mine = false, open = false, flag = false, nearby = 0 }
     end
   end
@@ -1546,9 +1557,10 @@ local function neighbours(row, col)
 end
 
 local function plantMines(safeRow, safeCol)
+  local level = settings()
   local candidates = {}
-  for row = 1, ROWS do
-    for col = 1, COLS do
+  for row = 1, level.rows do
+    for col = 1, level.cols do
       if row ~= safeRow or col ~= safeCol then candidates[#candidates + 1] = { row = row, col = col } end
     end
   end
@@ -1556,12 +1568,12 @@ local function plantMines(safeRow, safeCol)
     local other = math.random(index)
     candidates[index], candidates[other] = candidates[other], candidates[index]
   end
-  for index = 1, MINES do
+  for index = 1, level.mines do
     local target = candidates[index]
     cell(target.row, target.col).mine = true
   end
-  for row = 1, ROWS do
-    for col = 1, COLS do
+  for row = 1, level.rows do
+    for col = 1, level.cols do
       local count = 0
       for _, neighbour in ipairs(neighbours(row, col)) do if neighbour.cell.mine then count = count + 1 end end
       cell(row, col).nearby = count
@@ -1590,14 +1602,15 @@ local function openEmpty(startRow, startCol)
 end
 
 local function checkWin()
+  local level = settings()
   local opened = 0
-  for row = 1, ROWS do
-    for col = 1, COLS do
+  for row = 1, level.rows do
+    for col = 1, level.cols do
       local current = cell(row, col)
       if current.open and not current.mine then opened = opened + 1 end
     end
   end
-  won = opened == ROWS * COLS - MINES
+  won = opened == level.rows * level.cols - level.mines
 end
 
 local function openCell(row, col)
@@ -1620,36 +1633,42 @@ local function toggleFlag(row, col)
 end
 
 local function flagCount()
+  local level = settings()
   local result = 0
-  for row = 1, ROWS do
-    for col = 1, COLS do if cell(row, col).flag then result = result + 1 end end
+  for row = 1, level.rows do
+    for col = 1, level.cols do if cell(row, col).flag then result = result + 1 end end
   end
   return result
 end
 
 local function geometry(target)
+  local level = settings()
   local width, height = target.getSize()
-  local left = math.max(1, math.floor((width - COLS * 2) / 2) + 1)
-  local top = height >= 18 and 4 or 3
+  local left = math.max(1, math.floor((width - level.cols * 2) / 2) + 1)
+  local top = 3
   return width, height, left, top
 end
 
 local function drawTarget(target)
+  local level = settings()
   local width, height, left, top = geometry(target)
   ui.clear(target, colors.gray)
-  if width < 20 or height < 14 then
-    ui.line(target, 1, 1, width, "Сапёр", colors.white, colors.blue)
-    ui.text(target, 2, 3, "Нужен экран не меньше 20x14.", colors.white, colors.gray)
-    ui.text(target, 2, 5, "Esc — выход", colors.lightGray, colors.gray)
+  local state = lost and "Мина!" or (won and "Победа!" or "Мин: " .. tostring(level.mines - flagCount()))
+  ui.line(target, 1, 1, width, "ConcordOS | Сапёр | " .. level.title .. " | " .. state, lost and colors.red or (won and colors.lime or colors.white), colors.blue)
+  local firstWidth = math.floor(width / 3)
+  local secondWidth = math.floor(width / 3)
+  ui.button(target, 1, 2, firstWidth, 1, difficulties[1].short, colors.white, colors.green, difficulty == 1)
+  ui.button(target, firstWidth + 1, 2, secondWidth, 1, difficulties[2].short, colors.white, colors.orange, difficulty == 2)
+  ui.button(target, firstWidth + secondWidth + 1, 2, width - firstWidth - secondWidth, 1, difficulties[3].short, colors.white, colors.red, difficulty == 3)
+  if width < math.max(20, level.cols * 2) or height < level.rows + 3 then
+    ui.text(target, 2, 4, "Для этой сложности нужен экран", colors.white, colors.gray)
+    ui.text(target, 2, 5, "не меньше " .. tostring(level.cols * 2) .. "x" .. tostring(level.rows + 3) .. ".", colors.white, colors.gray)
+    ui.text(target, 2, 7, "Выбери сложность 1/2/3. Esc — выход", colors.lightGray, colors.gray)
     return
   end
 
-  ui.line(target, 1, 1, width, "ConcordOS | Сапёр", colors.white, colors.blue)
-  local state = lost and "Мина!" or (won and "Победа!" or "Мин: " .. tostring(MINES - flagCount()))
-  ui.line(target, 1, 2, width, state .. "   R — заново", lost and colors.red or (won and colors.lime or colors.white), colors.gray)
-
-  for row = 1, ROWS do
-    for col = 1, COLS do
+  for row = 1, level.rows do
+    for col = 1, level.cols do
       local current = cell(row, col)
       local x, y = left + (col - 1) * 2, top + row - 1
       local foreground, background, mark = colors.white, colors.lightGray, "[]"
@@ -1670,7 +1689,7 @@ local function drawTarget(target)
     end
   end
 
-  local footer = "ЛКМ: открыть  ПКМ/F: флаг  R: заново  Esc: выход"
+  local footer = "1/2/3: сложность  ЛКМ: открыть  ПКМ/F: флаг  R: заново  Esc: выход"
   ui.line(target, 1, height, width, footer, colors.black, colors.lightGray)
 end
 
@@ -1679,9 +1698,20 @@ local function draw()
 end
 
 local function boardPoint(target, x, y)
+  local level = settings()
   local _, _, left, top = geometry(target)
   local col, row = math.floor((x - left) / 2) + 1, y - top + 1
-  if row >= 1 and row <= ROWS and col >= 1 and col <= COLS then return row, col end
+  if row >= 1 and row <= level.rows and col >= 1 and col <= level.cols then return row, col end
+end
+
+local function chooseDifficulty(target, x, y)
+  if y ~= 2 then return false end
+  local width = target.getSize()
+  local firstWidth, secondWidth = math.floor(width / 3), math.floor(width / 3)
+  local selected = x <= firstWidth and 1 or (x <= firstWidth + secondWidth and 2 or 3)
+  if selected ~= difficulty then difficulty = selected end
+  reset()
+  return true
 end
 
 local seed = os.epoch and os.epoch("utc") or math.floor(os.clock() * 1000)
@@ -1694,26 +1724,43 @@ while true do
   if event == "term_resize" or (event == "monitor_resize" and a == monitorName) then
     draw()
   elseif event == "mouse_click" then
-    local row, col = boardPoint(computer, b, c)
-    if row then
-      cursorRow, cursorCol = row, col
-      if a == 1 then openCell(row, col) elseif a == 2 then toggleFlag(row, col) end
+    if chooseDifficulty(computer, b, c) then
       draw()
+    else
+      local row, col = boardPoint(computer, b, c)
+      if row then
+        cursorRow, cursorCol = row, col
+        if a == 1 then openCell(row, col) elseif a == 2 then toggleFlag(row, col) end
+        draw()
+      end
     end
   elseif event == "monitor_touch" and a == monitorName then
-    local row, col = boardPoint(monitor, b, c)
-    if row then
-      cursorRow, cursorCol = row, col
-      openCell(row, col)
+    if chooseDifficulty(monitor, b, c) then
       draw()
+    else
+      local row, col = boardPoint(monitor, b, c)
+      if row then
+        cursorRow, cursorCol = row, col
+        openCell(row, col)
+        draw()
+      end
     end
   elseif event == "key" then
     if a == keys.escape then return end
-    if a == keys.r then reset()
+    if a == keys.one then
+      difficulty = 1
+      reset()
+    elseif a == keys.two then
+      difficulty = 2
+      reset()
+    elseif a == keys.three then
+      difficulty = 3
+      reset()
+    elseif a == keys.r then reset()
     elseif a == keys.left then cursorCol = math.max(1, cursorCol - 1)
-    elseif a == keys.right then cursorCol = math.min(COLS, cursorCol + 1)
+    elseif a == keys.right then cursorCol = math.min(settings().cols, cursorCol + 1)
     elseif a == keys.up then cursorRow = math.max(1, cursorRow - 1)
-    elseif a == keys.down then cursorRow = math.min(ROWS, cursorRow + 1)
+    elseif a == keys.down then cursorRow = math.min(settings().rows, cursorRow + 1)
     elseif a == keys.f then toggleFlag(cursorRow, cursorCol)
     elseif a == keys.enter or a == keys.space then openCell(cursorRow, cursorCol)
     end
@@ -1725,7 +1772,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.4.1",
+  version = "0.4.2",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

@@ -7,13 +7,15 @@ local output = term.current()
 
 local page = "order"
 local activeField = "address"
-local fields = { address = "", item = "", amount = "", search = "" }
+local fields = { address = "", item = "", amount = "", search = "", buildName = "Стройка" }
 local catalogResults = {}
 local catalogPage = 0
 local CATALOG_PAGE_SIZE = 5
 local clipboardResults = {}
 local clipboardPage = 0
 local CLIPBOARD_PAGE_SIZE = 7
+local clipboardSelected = {}
+local addressReturnPage = "order"
 local confirmation = false
 local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
@@ -43,6 +45,18 @@ local function formatQuantity(count)
   if stacks > 0 and remainder == 0 then return tostring(count) .. " (" .. tostring(stacks) .. " ст.)" end
   if stacks > 0 then return tostring(count) .. " (" .. tostring(stacks) .. "+" .. tostring(remainder) .. ")" end
   return tostring(count)
+end
+
+local function selectedClipboardItems()
+  local result = {}
+  for _, item in ipairs(clipboardResults) do
+    if clipboardSelected[item.name] then result[#result + 1] = { item = item.name, count = item.count } end
+  end
+  return result
+end
+
+local function selectedClipboardCount()
+  return #selectedClipboardItems()
 end
 
 local function itemName(item, fallback)
@@ -109,6 +123,21 @@ local function drawOrder(width)
   inputBox(2, 12, width - 3, "Количество: 448 или 7с", fields.amount, activeField == "amount")
   ui.button(output, 2, 15, math.floor((width - 3) / 2), 2, "Из блокнота", colors.white, colors.purple, false)
   ui.button(output, 3 + math.floor((width - 3) / 2), 15, width - 3 - math.floor((width - 3) / 2), 2, "Создать заявку", colors.white, colors.red, false)
+end
+
+local function drawBuildOrder(width)
+  local selected = selectedClipboardItems()
+  local total = 0
+  for _, item in ipairs(selected) do total = total + item.count end
+  ui.text(output, 2, 5, "Заказ стройки: " .. tostring(#selected) .. " позиций из блокнота", colors.lightGray, colors.gray)
+  inputBox(2, 6, width - 13, "Адрес доставки", fields.address, activeField == "address")
+  ui.button(output, width - 9, 6, 9, 2, "Адреса", colors.white, colors.blue, false)
+  inputBox(2, 9, width - 3, "Название заказа", fields.buildName, activeField == "buildName")
+  ui.text(output, 2, 12, "Всего: " .. formatQuantity(total) .. ". Каждая позиция будет постоянной заявкой.", colors.lightGray, colors.gray)
+  ui.text(output, 2, 14, "После подтверждения откроется общий статус стройки.", colors.lightGray, colors.gray)
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, 16, leftWidth, 2, "Отмена", colors.white, colors.gray, false)
+  ui.button(output, 3 + leftWidth, 16, width - 3 - leftWidth, 2, "Создать заказ", colors.white, colors.red, false)
 end
 
 local function drawAddresses(width)
@@ -184,6 +213,7 @@ local function readClipboard()
   end
 
   clipboardResults = {}
+  clipboardSelected = {}
   for key, entry in pairs(raw) do
     local name = itemName(entry, key)
     local count = itemCount(entry)
@@ -198,6 +228,7 @@ local function readClipboard()
   table.sort(clipboardResults, function(a, b)
     return tostring(a.displayName or a.name) < tostring(b.displayName or b.name)
   end)
+  for _, item in ipairs(clipboardResults) do clipboardSelected[item.name] = true end
   clipboardPage = 0
   setStatus(#clipboardResults == 0 and "В блокноте нет недостающих предметов" or ("Считано позиций: " .. tostring(#clipboardResults)), colors.lightGray)
   return true
@@ -205,25 +236,29 @@ end
 
 local function drawClipboard(width)
   ui.text(output, 2, 5, "Недостающие материалы из планшета Create", colors.lightGray, colors.gray)
-  ui.button(output, 2, 6, width - 3, 1, "Считать блокнот", colors.white, colors.purple, false)
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, 6, leftWidth, 1, "Считать блокнот", colors.white, colors.purple, false)
+  ui.button(output, 3 + leftWidth, 6, width - 3 - leftWidth, 1, "Все / снять", colors.white, colors.blue, false)
   if #clipboardResults == 0 then
-    ui.text(output, 2, 8, "Нажми «Считать блокнот», затем выбери позицию.", colors.lightGray, colors.gray)
+    ui.text(output, 2, 8, "Нажми «Считать блокнот», затем отметь позиции.", colors.lightGray, colors.gray)
     return
   end
   local totalPages = math.max(1, math.ceil(#clipboardResults / CLIPBOARD_PAGE_SIZE))
   if clipboardPage >= totalPages then clipboardPage = totalPages - 1 end
   local first = clipboardPage * CLIPBOARD_PAGE_SIZE + 1
-  ui.text(output, 2, 7, "Клик по позиции — создать заявку. Стр. " .. tostring(clipboardPage + 1) .. "/" .. tostring(totalPages), colors.lightGray, colors.gray)
+  ui.text(output, 2, 7, "Выбрано: " .. tostring(selectedClipboardCount()) .. ". Стр. " .. tostring(clipboardPage + 1) .. "/" .. tostring(totalPages), colors.lightGray, colors.gray)
   for offset = 0, CLIPBOARD_PAGE_SIZE - 1 do
     local item = clipboardResults[first + offset]
     if item then
-      local label = tostring(item.displayName or item.name) .. " x" .. formatQuantity(item.count)
+      local mark = clipboardSelected[item.name] and "[x] " or "[ ] "
+      local label = mark .. tostring(item.displayName or item.name) .. " x" .. formatQuantity(item.count)
       ui.line(output, 2, 8 + offset, width - 3, ru.fit(label, width - 3, ""), colors.white, offset % 2 == 0 and colors.gray or colors.black)
     end
   end
-  local leftWidth = math.floor((width - 3) / 2)
   ui.button(output, 2, 16, leftWidth, 1, "< Пред.", colors.white, colors.gray, clipboardPage > 0)
   ui.button(output, 3 + leftWidth, 16, width - 3 - leftWidth, 1, "След. >", colors.white, colors.gray, clipboardPage < totalPages - 1)
+  ui.button(output, 2, 17, leftWidth, 1, "Очистить выбор", colors.white, colors.gray, false)
+  ui.button(output, 3 + leftWidth, 17, width - 3 - leftWidth, 1, "Заказ: " .. tostring(selectedClipboardCount()), colors.white, colors.red, selectedClipboardCount() > 0)
 end
 
 local function orderBar(order)
@@ -233,7 +268,31 @@ local function orderBar(order)
   return "[" .. string.rep("#", filled) .. string.rep("-", 8 - filled) .. "] " .. formatQuantity(accepted) .. "/" .. formatQuantity(requested)
 end
 
+local function progressBar(progress)
+  local requested = math.max(1, tonumber(progress.requested) or 1)
+  local accepted = tonumber(progress.accepted) or 0
+  local filled = math.min(8, math.floor(accepted * 8 / requested))
+  return "[" .. string.rep("#", filled) .. string.rep("-", 8 - filled) .. "] " .. formatQuantity(accepted) .. "/" .. formatQuantity(requested)
+end
+
 local function drawOrders(width)
+  local groups = orders.groups()
+  if #groups > 0 then
+    local first = math.max(1, #groups - 2)
+    local row = 5
+    for index = first, #groups do
+      local group = groups[index]
+      local progress = orders.groupProgress(group.id)
+      local state = progress.state == "active" and "в работе" or (progress.state == "accepted" and "готово" or "отмена")
+      ui.line(output, 2, row, width - 3, "Стройка №" .. tostring(group.id) .. " [" .. state .. "] " .. ru.fit(group.title, width - 22, ""), colors.white, colors.gray)
+      ui.line(output, 2, row + 1, width - 11, progressBar(progress), colors.lightGray, colors.black)
+      ui.button(output, width - 8, row + 1, 3, 1, "R", colors.white, colors.blue, false)
+      ui.button(output, width - 4, row + 1, 3, 1, "X", colors.white, colors.red, false)
+      ui.line(output, 2, row + 2, width - 3, ru.fit("-> " .. tostring(group.address), width - 3, ""), colors.lightGray, colors.gray)
+      row = row + 4
+    end
+    return
+  end
   local data = orders.load()
   if #data.orders == 0 then
     ui.text(output, 2, 6, "Заявок пока нет.", colors.lightGray, colors.gray)
@@ -284,6 +343,7 @@ local function draw()
   drawHeader(width)
   if confirmation then drawConfirmation(width)
   elseif page == "order" then drawOrder(width)
+  elseif page == "build" then drawBuildOrder(width)
   elseif page == "addresses" then drawAddresses(width)
   elseif page == "stock" then drawStock(width)
   elseif page == "clipboard" then drawClipboard(width)
@@ -312,11 +372,35 @@ local function submitOrder()
   confirmation = false
 end
 
+local function submitBuildOrder()
+  local items = selectedClipboardItems()
+  if fields.address == "" or #items == 0 then
+    setStatus("Выбери позиции и укажи адрес доставки", colors.red)
+    return
+  end
+  local group, created = orders.createGroup(fields.address, items, fields.buildName)
+  if not group then
+    setStatus(tostring(created or "Не удалось создать заказ стройки"), colors.red)
+    return
+  end
+  local ok, err = pcall(orders.tick)
+  page, activeField = "orders", nil
+  if ok then
+    setStatus("Заказ стройки №" .. tostring(group.id) .. ": " .. tostring(#created) .. " позиций", colors.lime)
+  else
+    setStatus("Заказ сохранён: " .. tostring(err), colors.orange)
+  end
+end
+
 local function fieldAt(x, y, width)
-  if page == "order" and x >= 2 and x < width - 11 then
+  if (page == "order" or page == "build") and x >= 2 and x < width - 11 then
     if y == 7 then return "address" end
-    if y == 10 then return "item" end
-    if y == 13 then return "amount" end
+    if page == "order" then
+      if y == 10 then return "item" end
+      if y == 13 then return "amount" end
+    elseif y == 10 then
+      return "buildName"
+    end
   elseif page == "stock" and x >= 2 and x < width - 1 and y == 6 then
     return "search"
   end
@@ -359,11 +443,14 @@ while true do
     if a == keys.tab and not confirmation then
       if page == "order" then
         activeField = activeField == "address" and "item" or (activeField == "item" and "amount" or "address")
+      elseif page == "build" then
+        activeField = activeField == "address" and "buildName" or "address"
       end
     elseif a == keys.backspace and not confirmation then backspace()
     elseif a == keys.enter then
       if confirmation then submitOrder()
       elseif page == "order" then confirmation = true
+      elseif page == "build" then submitBuildOrder()
       elseif page == "stock" then loadCatalog()
       end
     elseif a == keys.f5 then draw()
@@ -394,12 +481,13 @@ while true do
         else
           confirmation = true
         end
-      elseif page == "order" and x >= width - 9 and y >= 6 and y <= 7 then
+      elseif (page == "order" or page == "build") and x >= width - 9 and y >= 6 and y <= 7 then
+        addressReturnPage = page
         page, activeField = "addresses", nil
       elseif page == "addresses" and y == 6 then
         local leftWidth = math.floor((width - 3) / 2)
         if x < 3 + leftWidth then
-          page, activeField = "order", "address"
+          page, activeField = addressReturnPage, "address"
         elseif fields.address == "" then
           setStatus("Сначала введи адрес доставки", colors.orange)
         else
@@ -410,7 +498,7 @@ while true do
         local address = orders.addresses()[y - 7]
         if address then
           fields.address = address
-          page, activeField = "order", "item"
+          page, activeField = addressReturnPage, addressReturnPage == "build" and "buildName" or "item"
           setStatus("Адрес выбран", colors.lime)
         end
       elseif page == "stock" and y == 8 then
@@ -432,14 +520,20 @@ while true do
           catalogPage = math.min(totalPages - 1, catalogPage + 1)
         end
       elseif page == "clipboard" and y == 6 then
-        readClipboard()
+        local leftWidth = math.floor((width - 3) / 2)
+        if x < 3 + leftWidth then
+          readClipboard()
+        else
+          local selectAll = selectedClipboardCount() < #clipboardResults
+          clipboardSelected = {}
+          if selectAll then
+            for _, item in ipairs(clipboardResults) do clipboardSelected[item.name] = true end
+          end
+        end
       elseif page == "clipboard" and y >= 8 and y <= 14 then
         local item = clipboardResults[clipboardPage * CLIPBOARD_PAGE_SIZE + y - 7]
         if item then
-          fields.item = item.name
-          fields.amount = tostring(item.count)
-          page, activeField = "order", "address"
-          setStatus("Предмет и количество перенесены в постоянную заявку", colors.lime)
+          clipboardSelected[item.name] = not clipboardSelected[item.name]
         end
       elseif page == "clipboard" and y == 16 then
         local totalPages = math.max(1, math.ceil(#clipboardResults / CLIPBOARD_PAGE_SIZE))
@@ -449,15 +543,45 @@ while true do
         else
           clipboardPage = math.min(totalPages - 1, clipboardPage + 1)
         end
+      elseif page == "clipboard" and y == 17 then
+        local leftWidth = math.floor((width - 3) / 2)
+        if x < 3 + leftWidth then
+          clipboardSelected = {}
+        elseif selectedClipboardCount() > 0 then
+          page, activeField = "build", "address"
+        else
+          setStatus("Отметь хотя бы одну позицию", colors.orange)
+        end
+      elseif page == "build" and y >= 16 and y <= 17 then
+        local leftWidth = math.floor((width - 3) / 2)
+        if x < 3 + leftWidth then
+          page, activeField = "clipboard", nil
+        else
+          submitBuildOrder()
+        end
       elseif page == "orders" then
-        local first = math.max(1, #orders.load().orders - 2)
-        for index = first, #orders.load().orders do
-          local row = 5 + (index - first) * 4
-          local order = orders.load().orders[index]
-          if y == row + 1 and x >= width - 8 and x <= width - 6 then
-            if orders.retry(order.id) then pcall(orders.tick, order.id) setStatus("Повтор отправлен", colors.lime) end
-          elseif y == row + 1 and x >= width - 4 then
-            if orders.cancel(order.id) then setStatus("Заявка отменена", colors.orange) end
+        local groups = orders.groups()
+        if #groups > 0 then
+          local first = math.max(1, #groups - 2)
+          for index = first, #groups do
+            local row = 5 + (index - first) * 4
+            local group = groups[index]
+            if y == row + 1 and x >= width - 8 and x <= width - 6 then
+              if orders.retryGroup(group.id) then pcall(orders.tick) setStatus("Повтор стройки отправлен", colors.lime) end
+            elseif y == row + 1 and x >= width - 4 then
+              if orders.cancelGroup(group.id) then setStatus("Заказ стройки отменён", colors.orange) end
+            end
+          end
+        else
+          local first = math.max(1, #orders.load().orders - 2)
+          for index = first, #orders.load().orders do
+            local row = 5 + (index - first) * 4
+            local order = orders.load().orders[index]
+            if y == row + 1 and x >= width - 8 and x <= width - 6 then
+              if orders.retry(order.id) then pcall(orders.tick, order.id) setStatus("Повтор отправлен", colors.lime) end
+            elseif y == row + 1 and x >= width - 4 then
+              if orders.cancel(order.id) then setStatus("Заявка отменена", colors.orange) end
+            end
           end
         end
       end

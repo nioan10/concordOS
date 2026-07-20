@@ -12,7 +12,7 @@ local function now()
 end
 
 local function defaultData()
-  return { version = 1, nextId = 1, orders = {}, addresses = {} }
+  return { version = 2, nextId = 1, nextGroupId = 1, orders = {}, addresses = {}, groups = {} }
 end
 
 local function rememberAddress(data, address)
@@ -35,7 +35,9 @@ function orders.load()
   local data = textutils.unserialize(raw)
   if type(data) ~= "table" or type(data.orders) ~= "table" then return defaultData() end
   data.nextId = tonumber(data.nextId) or 1
+  data.nextGroupId = tonumber(data.nextGroupId) or 1
   if type(data.addresses) ~= "table" then data.addresses = {} end
+  if type(data.groups) ~= "table" then data.groups = {} end
   for _, order in ipairs(data.orders) do
     if order.state == "queued" or order.state == "pending" then order.state = "active" end
     order.nextAttemptAt = tonumber(order.nextAttemptAt) or 0
@@ -75,6 +77,55 @@ function orders.create(address, item, count)
   return order
 end
 
+function orders.createGroup(address, items, title)
+  local data = orders.load()
+  local grouped = {}
+  for _, entry in ipairs(items or {}) do
+    local item = tostring(type(entry) == "table" and entry.item or "")
+    local count = math.max(0, math.floor(tonumber(type(entry) == "table" and entry.count) or 0))
+    if item ~= "" and count > 0 then grouped[item] = (grouped[item] or 0) + count end
+  end
+
+  local names = {}
+  for item in pairs(grouped) do names[#names + 1] = item end
+  table.sort(names)
+  if #names == 0 then return nil, "Нет позиций для заказа" end
+
+  local group = {
+    id = data.nextGroupId,
+    title = tostring(title or "Стройка"),
+    address = tostring(address or ""),
+    createdAt = now(),
+  }
+  data.nextGroupId = group.id + 1
+  data.groups[#data.groups + 1] = group
+
+  local created = {}
+  for _, item in ipairs(names) do
+    local order = {
+      id = data.nextId,
+      groupId = group.id,
+      address = group.address,
+      item = item,
+      requested = grouped[item],
+      accepted = 0,
+      state = "active",
+      attempts = 0,
+      emptyAttempts = 0,
+      createdAt = now(),
+      lastAttemptAt = 0,
+      nextAttemptAt = 0,
+      lastResult = "Создано в заказе стройки",
+    }
+    data.nextId = order.id + 1
+    data.orders[#data.orders + 1] = order
+    created[#created + 1] = order
+  end
+  rememberAddress(data, group.address)
+  orders.save(data)
+  return group, created
+end
+
 function orders.rememberAddress(address)
   local data = orders.load()
   rememberAddress(data, address)
@@ -83,6 +134,24 @@ end
 
 function orders.addresses()
   return orders.load().addresses
+end
+
+function orders.groups()
+  return orders.load().groups
+end
+
+function orders.groupProgress(groupId)
+  local requested, accepted, active, cancelled = 0, 0, 0, 0
+  for _, order in ipairs(orders.load().orders) do
+    if order.groupId == groupId then
+      requested = requested + (tonumber(order.requested) or 0)
+      accepted = accepted + (tonumber(order.accepted) or 0)
+      if order.state == "active" then active = active + 1 end
+      if order.state == "cancelled" then cancelled = cancelled + 1 end
+    end
+  end
+  local state = active > 0 and "active" or (accepted >= requested and requested > 0 and "accepted" or "cancelled")
+  return { requested = requested, accepted = accepted, active = active, cancelled = cancelled, state = state }
 end
 
 function orders.cancel(id)
@@ -98,6 +167,20 @@ function orders.cancel(id)
   return false
 end
 
+function orders.cancelGroup(groupId)
+  local data = orders.load()
+  local changed = false
+  for _, order in ipairs(data.orders) do
+    if order.groupId == groupId and order.state == "active" then
+      order.state = "cancelled"
+      order.lastResult = "Отменено вместе с заказом стройки"
+      changed = true
+    end
+  end
+  if changed then orders.save(data) end
+  return changed
+end
+
 function orders.retry(id)
   local data = orders.load()
   for _, order in ipairs(data.orders) do
@@ -109,6 +192,20 @@ function orders.retry(id)
     end
   end
   return false
+end
+
+function orders.retryGroup(groupId)
+  local data = orders.load()
+  local changed = false
+  for _, order in ipairs(data.orders) do
+    if order.groupId == groupId and order.state == "active" then
+      order.nextAttemptAt = 0
+      order.lastResult = "Повтор назначен для заказа стройки"
+      changed = true
+    end
+  end
+  if changed then orders.save(data) end
+  return changed
 end
 
 function orders.remaining(order)

@@ -10,7 +10,7 @@ if monitor then outputs[#outputs + 1] = monitor end
 local difficulties = {
   { title = "Лёгкая", short = "Лёгк.", rows = 9, cols = 9, mines = 10 },
   { title = "Средняя", short = "Сред.", rows = 12, cols = 12, mines = 24 },
-  { title = "Сложная", short = "Слож.", rows = 16, cols = 16, mines = 48 },
+  { title = "Сложная", short = "Слож.", rows = 21, cols = 21, mines = 80 },
 }
 local difficulty = 1
 local board = {}
@@ -149,12 +149,21 @@ local function geometry(target)
   return width, height, left, top
 end
 
+local function homeButton(target)
+  local width = target.getSize()
+  local buttonWidth = width >= 40 and 11 or 3
+  return width - buttonWidth + 1, buttonWidth, buttonWidth == 3 and "<" or "< Главная"
+end
+
 local function drawTarget(target)
   local level = settings()
   local width, height, left, top = geometry(target)
   ui.clear(target, colors.gray)
   local state = lost and "Мина!" or (won and "Победа!" or "Мин: " .. tostring(level.mines - flagCount()))
   ui.line(target, 1, 1, width, "ConcordOS | Сапёр | " .. level.title .. " | " .. state, lost and colors.red or (won and colors.lime or colors.white), colors.blue)
+  local homeX, homeWidth, homeLabel = homeButton(target)
+  ui.button(target, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
+  ui.text(target, homeX, 1, homeLabel, colors.white, colors.lightBlue)
   local firstWidth = math.floor(width / 3)
   local secondWidth = math.floor(width / 3)
   ui.button(target, 1, 2, firstWidth, 1, difficulties[1].short, colors.white, colors.green, difficulty == 1)
@@ -214,6 +223,11 @@ local function chooseDifficulty(target, x, y)
   return true
 end
 
+local function clickedHome(target, x, y)
+  local homeX, homeWidth = homeButton(target)
+  return y == 1 and x >= homeX and x < homeX + homeWidth
+end
+
 local seed = os.epoch and os.epoch("utc") or math.floor(os.clock() * 1000)
 math.randomseed(seed)
 reset()
@@ -224,7 +238,9 @@ while true do
   if event == "term_resize" or (event == "monitor_resize" and a == monitorName) then
     draw()
   elseif event == "mouse_click" then
-    if chooseDifficulty(computer, b, c) then
+    if clickedHome(computer, b, c) then
+      return
+    elseif chooseDifficulty(computer, b, c) then
       draw()
     else
       local row, col = boardPoint(computer, b, c)
@@ -235,7 +251,9 @@ while true do
       end
     end
   elseif event == "monitor_touch" and a == monitorName then
-    if chooseDifficulty(monitor, b, c) then
+    if clickedHome(monitor, b, c) then
+      return
+    elseif chooseDifficulty(monitor, b, c) then
       draw()
     else
       local row, col = boardPoint(monitor, b, c)

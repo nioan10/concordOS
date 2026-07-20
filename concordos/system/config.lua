@@ -1,7 +1,7 @@
 return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.5.2",
+  version = "0.6.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },
@@ -14,5 +14,6 @@ return {
     { id = "checklist", title = "Чеклист материалов", subtitle = "Create Material Checklist", path = "/checklist.lua", color = colors.orange },
     { id = "inspect", title = "Инспектор Create", subtitle = "Периферии, методы и CC-интеграции", path = "/concordos/apps/inspect.lua", color = colors.purple },
     { id = "mines", title = "Сапёр", subtitle = "Короткая передышка от промзоны", path = "/concordos/apps/mines.lua", color = colors.green },
+    { id = "power", title = "Энергопульт", subtitle = "Нагрузка центральной сети вращения", path = "/concordos/apps/power.lua", color = colors.yellow },
   },
 }

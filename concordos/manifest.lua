@@ -1,6 +1,6 @@
 -- Public ConcordOS update manifest. Served directly from the main branch.
 return {
-  version = "0.5.2",
+  version = "0.6.0",
   files = {
     { source = "startup.lua", target = "/startup" },
     { source = "update.lua", target = "/update" },
@@ -9,6 +9,7 @@ return {
     { source = "apps/master_gui.lua", target = "/concordos/apps/master_gui.lua" },
     { source = "apps/mines.lua", target = "/concordos/apps/mines.lua" },
     { source = "apps/inspect.lua", target = "/concordos/apps/inspect.lua" },
+    { source = "apps/power.lua", target = "/concordos/apps/power.lua" },
     { source = "system/config.lua", target = "/concordos/system/config.lua" },
     { source = "system/boot.lua", target = "/concordos/system/boot.lua" },
     { source = "system/desktop.lua", target = "/concordos/system/desktop.lua" },

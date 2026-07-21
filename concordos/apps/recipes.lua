@@ -11,6 +11,7 @@ local activeField = nil
 local fields = { name = "", output = "", outputCount = "1", line = "", ingredients = "", duration = "" }
 local editingId = nil
 local plan, status, statusColor = nil, "Реестр пуст — добавь первую технологию.", colors.lightGray
+local picker = { target = nil, search = "", items = {}, page = 0, selected = 1 }
 -- Five rows deliberately fit a normal 51×19 computer without covering footer.
 local PAGE_SIZE = 5
 local shiftHeld = false
@@ -63,6 +64,63 @@ end
 
 local function setStatus(text, color)
   status, statusColor = tostring(text or ""), color or colors.lightGray
+end
+
+local function itemName(entry, fallback)
+  if type(entry) ~= "table" then return nil end
+  return entry.name or entry.id or (type(entry.item) == "table" and (entry.item.name or entry.item.id))
+    or (type(fallback) == "string" and fallback:find(":") and fallback)
+end
+
+local function itemCount(entry)
+  if type(entry) ~= "table" then return 0 end
+  return tonumber(entry.count or entry.amount or entry.quantity or entry.total) or 0
+end
+
+local function loadPicker(target)
+  picker = { target = target, search = "", items = {}, page = 0, selected = 1 }
+  local ticker = peripheral.find("Create_StockTicker")
+  if not ticker then
+    setStatus("Stock Ticker не найден", colors.red)
+    return false
+  end
+  local ok, stock = pcall(ticker.stock, false)
+  if not ok or type(stock) ~= "table" then
+    setStatus("Не удалось прочитать Stock Ticker", colors.red)
+    return false
+  end
+  local merged = {}
+  for key, entry in pairs(stock) do
+    local name = itemName(entry, key)
+    if name then merged[name] = (merged[name] or 0) + itemCount(entry) end
+  end
+  for name, count in pairs(merged) do picker.items[#picker.items + 1] = { name = name, count = count } end
+  table.sort(picker.items, function(a, b) return ru.lower(a.name) < ru.lower(b.name) end)
+  screen = "stock"
+  setStatus("Выбери предмет — ID будет подставлен автоматически", colors.lime)
+  return true
+end
+
+local function pickerResults()
+  local raw = tostring(picker.search or "")
+  local results, query = {}, ru.lower(raw:match("^%s*(.-)%s*$"))
+  for _, item in ipairs(picker.items) do
+    if query == "" or ru.lower(item.name):find(query, 1, true) then results[#results + 1] = item end
+  end
+  return results
+end
+
+local function choosePickerItem(item)
+  if not item then return end
+  if picker.target == "output" then
+    fields.output = item.name
+  else
+    local separator = fields.ingredients == "" and "" or "; "
+    fields.ingredients = fields.ingredients .. separator .. item.name .. " x1"
+  end
+  activeField = picker.target
+  screen = "edit"
+  setStatus("Подставлен ID: " .. item.name, colors.lime)
 end
 
 local function trim(value)
@@ -141,9 +199,9 @@ local function stockMap()
   local ok, items = pcall(ticker.stock, false)
   if not ok or type(items) ~= "table" then return {}, false end
   local stock = {}
-  for _, entry in ipairs(items) do
-    local name = type(entry) == "table" and (entry.name or entry.id or (type(entry.item) == "table" and entry.item.name))
-    local count = type(entry) == "table" and tonumber(entry.count or entry.amount or entry.quantity or entry.total)
+  for key, entry in pairs(items) do
+    local name = itemName(entry, key)
+    local count = itemCount(entry)
     if name and count then stock[name] = (stock[name] or 0) + count end
   end
   return stock, true
@@ -199,7 +257,33 @@ local labels = {
 
 local function input(width, y, key)
   ui.text(output, 2, y, labels[key], colors.lightGray, colors.gray)
-  ui.line(output, 2, y + 1, width - 3, ru.fit(fields[key] .. (activeField == key and "|" or ""), width - 3, ""), colors.white, activeField == key and colors.blue or colors.black)
+  local hasPicker = key == "output" or key == "ingredients"
+  local inputWidth = hasPicker and width - 12 or width - 3
+  ui.line(output, 2, y + 1, inputWidth, ru.fit(fields[key] .. (activeField == key and "|" or ""), inputWidth, ""), colors.white, activeField == key and colors.blue or colors.black)
+  if hasPicker then ui.button(output, width - 9, y + 1, 8, 1, "Склад", colors.white, colors.purple, false) end
+end
+
+local function drawStockPicker(width, height)
+  header(width, "Выбор ID со склада")
+  local target = picker.target == "output" and "результата" or "ингредиента"
+  ui.text(output, 2, 3, "Выбор " .. target .. ". Поиск по ID:", colors.lightGray, colors.gray)
+  ui.line(output, 2, 4, width - 3, ru.fit(picker.search .. "|", width - 3, ""), colors.white, colors.blue)
+  local results = pickerResults()
+  local pageSize = math.max(1, math.min(7, height - 8))
+  local pages = math.max(1, math.ceil(#results / pageSize))
+  if picker.page >= pages then picker.page = pages - 1 end
+  local first = picker.page * pageSize + 1
+  for row = 0, pageSize - 1 do
+    local item = results[first + row]
+    if item then
+      local y = 6 + row
+      local current = first + row == picker.selected
+      ui.line(output, 2, y, width - 3, ru.fit(item.name .. "  ×" .. tostring(item.count), width - 3, ""), colors.white, current and colors.blue or colors.black)
+    end
+  end
+  if #results == 0 then ui.text(output, 2, 7, "Ничего не найдено.", colors.orange, colors.gray) end
+  ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
+  ui.line(output, 1, height, width, "Стр. " .. tostring(picker.page + 1) .. "/" .. tostring(pages) .. "  Enter: выбрать  F7: " .. inputLayoutName(), colors.black, colors.lightGray)
 end
 
 local function drawEdit(width, height)
@@ -252,6 +336,7 @@ local function draw()
   local width, height = output.getSize()
   if screen == "list" then drawList(width, height)
   elseif screen == "edit" then drawEdit(width, height)
+  elseif screen == "stock" then drawStockPicker(width, height)
   else drawPlan(width, height) end
 end
 
@@ -286,6 +371,11 @@ while true do
     draw()
   elseif event == "paste" or (event == "char" and not russianInput) then
     if screen == "edit" and activeField then fields[activeField] = fields[activeField] .. a draw() end
+    if screen == "stock" then
+      picker.search = picker.search .. a
+      picker.page, picker.selected = 0, 1
+      draw()
+    end
   elseif event == "key" then
     if screen == "list" then
       if a == keys.enter then openSelected()
@@ -308,12 +398,34 @@ while true do
         if saveRecipe() then makePlan(registry.get(editingId) or registry.findOutput(fields.output)) end
       elseif a == keys.escape then screen, activeField = "list", nil
       end
+    elseif screen == "stock" then
+      local character = russianInput and russianChar(a)
+      local results = pickerResults()
+      if a == keys.f7 then russianInput = not russianInput
+      elseif character then
+        picker.search = picker.search .. character
+        picker.page, picker.selected = 0, 1
+      elseif a == keys.backspace then
+        picker.search = ru.sub(picker.search, 1, ru.len(picker.search) - 1)
+        picker.page, picker.selected = 0, 1
+      elseif a == keys.up then picker.selected = math.max(1, picker.selected - 1)
+      elseif a == keys.down then picker.selected = math.min(#results, picker.selected + 1)
+      elseif a == keys.enter then choosePickerItem(results[picker.selected])
+      elseif a == keys.escape then screen, activeField = "edit", picker.target
+      end
     elseif screen == "plan" and (a == keys.enter or a == keys.escape or a == keys.q) then screen = "list" end
     draw()
-  elseif event == "mouse_scroll" and screen == "list" then
-    local total = math.max(0, math.ceil(#registry.list() / PAGE_SIZE) - 1)
-    page = math.max(0, math.min(total, page + (a > 0 and 1 or -1)))
-    selected = math.min(math.max(1, #registry.list()), page * PAGE_SIZE + 1)
+  elseif event == "mouse_scroll" and (screen == "list" or screen == "stock") then
+    if screen == "list" then
+      local total = math.max(0, math.ceil(#registry.list() / PAGE_SIZE) - 1)
+      page = math.max(0, math.min(total, page + (a > 0 and 1 or -1)))
+      selected = math.min(math.max(1, #registry.list()), page * PAGE_SIZE + 1)
+    else
+      local pageSize = math.max(1, math.min(7, height - 8))
+      local total = math.max(0, math.ceil(#pickerResults() / pageSize) - 1)
+      picker.page = math.max(0, math.min(total, picker.page + (a > 0 and 1 or -1)))
+      picker.selected = picker.page * pageSize + 1
+    end
     draw()
   elseif event == "mouse_click" then
     local x, y = b, c
@@ -328,11 +440,21 @@ while true do
       end
     elseif screen == "edit" then
       local key = fieldAt(y, height)
-      if key then activeField = key
+      if (key == "output" or key == "ingredients") and x >= width - 9 then
+        loadPicker(key)
+      elseif key then activeField = key
       elseif y == height - 3 then
         if x < 14 then saveRecipe()
         elseif x < 27 then screen, activeField = "list", nil
         elseif editingId then deleteRecipe() end
+      end
+    elseif screen == "stock" then
+      if y == 4 then
+        -- Search field already stays active; this makes the click explicit.
+      elseif y >= 6 then
+        local pageSize = math.max(1, math.min(7, height - 8))
+        local item = pickerResults()[picker.page * pageSize + y - 5]
+        if item then choosePickerItem(item) end
       end
     else
       screen = "list"

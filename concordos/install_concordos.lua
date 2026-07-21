@@ -2246,6 +2246,7 @@ local outputs = { computer }
 if monitor then outputs[#outputs + 1] = monitor end
 
 local screen = "files"
+local previewPage = 1
 local entries, filePage, selected = {}, 0, 1
 local document = nil
 local cursorLine, cursorCol, scrollLine, scrollCol = 1, 1, 1, 1
@@ -2592,6 +2593,20 @@ local function printableLines(lines, width)
   return result
 end
 
+local function previewData()
+  local width, height = paperSize()
+  local content = printableLines(document and document.lines or { "" }, width)
+  return width, height, content, math.max(1, math.ceil(#content / height))
+end
+
+local function openPreview()
+  if not document then return end
+  local _, _, _, pages = previewData()
+  previewPage = math.max(1, math.min(previewPage, pages))
+  screen = "preview"
+  setStatus("Предпросмотр: лист " .. tostring(previewPage) .. "/" .. tostring(pages), colors.lightBlue)
+end
+
 local function printDocument()
   if not document then return end
   local printer = peripheral.find("printer")
@@ -2676,7 +2691,7 @@ local function drawEditor(target)
   ui.line(target, 1, 3, width, (document.changed and "* " or "") .. document.name, colors.white, colors.gray)
   local part = math.floor((width - 3) / 3)
   ui.button(target, 2, 4, part, 1, "Сохранить", colors.white, colors.green, false)
-  ui.button(target, 3 + part, 4, part, 1, "Печать", colors.white, colors.orange, false)
+  ui.button(target, 3 + part, 4, part, 1, "Просмотр", colors.white, colors.orange, false)
   ui.button(target, 4 + part * 2, 4, width - (3 + part * 2), 1, "Название", colors.white, colors.blue, false)
   keepCursorVisible(target)
   for offset = 0, rows - 1 do
@@ -2694,11 +2709,47 @@ local function drawEditor(target)
       local background = lineIndex == cursorLine and colors.black or colors.gray
       ui.line(target, textX, y, contentWidth, shown, colors.white, background)
       ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, background)
+      local page = math.floor((lineIndex - 1) / paperHeight) + 1
+      local marker = ""
+      if (lineIndex - 1) % paperHeight == 0 then marker = " Лист " .. tostring(page)
+      elseif lineIndex % paperHeight == 0 then marker = " <- конец " .. tostring(page) end
+      if textX + contentWidth < width then ui.line(target, textX + contentWidth + 1, y, width - textX - contentWidth, marker, colors.orange, background) end
     else
       ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, colors.gray)
+      local page = math.floor((lineIndex - 1) / paperHeight) + 1
+      local marker = (lineIndex - 1) % paperHeight == 0 and (" Лист " .. tostring(page)) or ""
+      if textX + contentWidth < width then ui.line(target, textX + contentWidth + 1, y, width - textX - contentWidth, marker, colors.orange, colors.gray) end
     end
   end
-  ui.line(target, 1, height, width, "Лист: " .. tostring(contentWidth) .. "x" .. tostring(paperHeight) .. " | край  F2: сохр. F3: печать F7: " .. inputLayoutName(), colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "Лист: " .. tostring(contentWidth) .. "x" .. tostring(paperHeight) .. " | край  F2: сохр. F3: просмотр F7: " .. inputLayoutName(), colors.black, colors.lightGray)
+end
+
+local function drawPreview(target)
+  local width, height = target.getSize()
+  local pageWidth, pageHeight, content, pages = previewData()
+  previewPage = math.max(1, math.min(previewPage, pages))
+  drawHeader(target, "Предпросмотр печати", "< Редактор")
+  ui.line(target, 1, 3, width, document.name .. "  ·  лист " .. tostring(previewPage) .. "/" .. tostring(pages), colors.white, colors.gray)
+
+  local paperX = math.max(2, math.floor((width - pageWidth - 2) / 2) + 1)
+  local top = 4
+  local visibleRows = math.min(pageHeight, math.max(1, height - 7))
+  ui.line(target, paperX, top, pageWidth + 2, "+" .. string.rep("-", pageWidth) .. "+", colors.black, colors.white)
+  local first = (previewPage - 1) * pageHeight + 1
+  for row = 1, visibleRows do
+    local line = content[first + row - 1] or ""
+    ui.line(target, paperX, top + row, pageWidth + 2, "|" .. ru.padRight(line, pageWidth) .. "|", colors.black, colors.white)
+  end
+  ui.line(target, paperX, top + visibleRows + 1, pageWidth + 2, "+" .. string.rep("-", pageWidth) .. "+", colors.black, colors.white)
+  if visibleRows < pageHeight then
+    ui.line(target, 2, top + visibleRows + 2, width - 2, "Видна верхняя часть листа: " .. tostring(visibleRows) .. "/" .. tostring(pageHeight) .. " строк", colors.orange, colors.gray)
+  end
+
+  local buttonY = height - 1
+  ui.button(target, 2, buttonY, 7, 1, "< Лист", colors.white, colors.gray, false)
+  ui.button(target, math.floor((width - 11) / 2) + 1, buttonY, 11, 1, "Печать", colors.white, colors.green, false)
+  ui.button(target, width - 7, buttonY, 6, 1, "Лист >", colors.white, colors.gray, false)
+  ui.line(target, 1, height, width, "Стр. " .. tostring(previewPage) .. "/" .. tostring(pages) .. "  Стрелки: лист  Enter: печать", colors.black, colors.lightGray)
 end
 
 local function drawPrompt(target)
@@ -2727,7 +2778,9 @@ end
 local function drawTarget(target)
   local width = target.getSize()
   ui.clear(target, colors.gray)
-  if screen == "files" then drawFiles(target) else drawEditor(target) end
+  if screen == "files" then drawFiles(target)
+  elseif screen == "preview" then drawPreview(target)
+  else drawEditor(target) end
   drawPrompt(target)
   drawConfirm(target)
   if not prompt and not confirmDelete then ui.line(target, 1, 2, width, ru.fit(statusText, width, ""), statusColor, colors.gray) end
@@ -2738,7 +2791,8 @@ local function draw()
 end
 
 local function clickedHome(target, x, y)
-  local homeX, homeWidth = homeButton(target, screen == "editor" and "< Файлы" or nil)
+  local label = screen == "editor" and "< Файлы" or (screen == "preview" and "< Редактор" or nil)
+  local homeX, homeWidth = homeButton(target, label)
   return y == 1 and x >= homeX and x < homeX + homeWidth
 end
 
@@ -2833,6 +2887,11 @@ while true do
           setStatus("Файл переименован", colors.lime)
         end)
       end
+    elseif screen == "preview" then
+      local _, _, _, pages = previewData()
+      if a == keys.left or a == keys.up then previewPage = math.max(1, previewPage - 1)
+      elseif a == keys.right or a == keys.down then previewPage = math.min(pages, previewPage + 1)
+      elseif a == keys.enter or a == keys.f3 then printDocument() end
     else
       local line = document.lines[cursorLine]
       local character = russianInput and russianChar(a)
@@ -2843,7 +2902,7 @@ while true do
         rememberEdit()
         insertText(character)
       elseif a == keys.f2 then saveDocument()
-      elseif a == keys.f3 then printDocument()
+      elseif a == keys.f3 then openPreview()
       elseif a == keys.f4 then startPrompt("Название нового документа", "", createDocument)
       elseif a == keys.f6 then startPrompt("Новое название", document.name:gsub("%.txt$", ""), renameDocument)
       elseif a == keys.enter then
@@ -2876,10 +2935,15 @@ while true do
       keepCursorVisible(computer)
     end
     draw()
-  elseif event == "mouse_scroll" and screen == "files" then
-    local perPage = rowsPerPage(computer, 6)
-    local maxPage = math.max(0, math.ceil(#entries / perPage) - 1)
-    filePage = math.max(0, math.min(maxPage, filePage + (a > 0 and 1 or -1)))
+  elseif event == "mouse_scroll" then
+    if screen == "files" then
+      local perPage = rowsPerPage(computer, 6)
+      local maxPage = math.max(0, math.ceil(#entries / perPage) - 1)
+      filePage = math.max(0, math.min(maxPage, filePage + (a > 0 and 1 or -1)))
+    elseif screen == "preview" then
+      local _, _, _, pages = previewData()
+      previewPage = math.max(1, math.min(pages, previewPage + (a > 0 and 1 or -1)))
+    end
     draw()
   elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
@@ -2887,6 +2951,8 @@ while true do
       if screen == "editor" then
         screen = "files"
         scanFiles()
+      elseif screen == "preview" then
+        screen = "editor"
       else
         return
       end
@@ -2912,12 +2978,20 @@ while true do
           openDocument(entries[index])
         end
       end
+    elseif screen == "preview" then
+      local width, height = target.getSize()
+      local _, _, _, pages = previewData()
+      if y == height - 1 then
+        if x <= 8 then previewPage = math.max(1, previewPage - 1)
+        elseif x >= width - 7 then previewPage = math.min(pages, previewPage + 1)
+        elseif x >= math.floor((width - 11) / 2) + 1 and x <= math.floor((width - 11) / 2) + 11 then printDocument() end
+      end
     else
       local width = target.getSize()
       local part = math.floor((width - 3) / 3)
       if y == 4 then
         if x < 3 + part then saveDocument()
-        elseif x < 4 + part * 2 then printDocument()
+        elseif x < 4 + part * 2 then openPreview()
         else startPrompt("Новое название", document.name:gsub("%.txt$", ""), renameDocument) end
       else
         local _, targetHeight = target.getSize()
@@ -2941,7 +3015,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.8.2",
+  version = "0.9.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

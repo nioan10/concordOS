@@ -2664,7 +2664,10 @@ local function printDocument(firstPage, lastPage)
   local printer = peripheral.find("printer")
   if not printer then setStatus("Принтер CC:Tweaked не найден", colors.red) return end
   saveDocument()
-  local width, height = printer.getPageSize()
+  -- CC:Tweaked only allows printer.getPageSize() after newPage(). We need
+  -- dimensions before choosing a document page, so use the same safe helper
+  -- as the editor (25x21 fallback for a standard printer).
+  local width, height = paperSize()
   local content = printableLines(document.lines, width)
   local totalPages = math.max(1, math.ceil(#content / height))
   firstPage = math.max(1, math.min(tonumber(firstPage) or 1, totalPages))
@@ -3116,7 +3119,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.10.3",
+  version = "0.10.4",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

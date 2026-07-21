@@ -16,6 +16,29 @@ local cursorLine, cursorCol, scrollLine, scrollCol = 1, 1, 1, 1
 local prompt, confirmDelete = nil, nil
 local statusText, statusColor = "Готово", colors.lightGray
 
+-- CC:Tweaked on some clients only sends Latin characters from the physical
+-- keyboard.  Keep a small, self-contained Russian layout for documents so
+-- writing does not depend on the Minecraft/client keyboard layout.
+local russianInput = true
+local russianKeys = {
+  [keys.q] = "й", [keys.w] = "ц", [keys.e] = "у", [keys.r] = "к", [keys.t] = "е",
+  [keys.y] = "н", [keys.u] = "г", [keys.i] = "ш", [keys.o] = "щ", [keys.p] = "з",
+  [keys.a] = "ф", [keys.s] = "ы", [keys.d] = "в", [keys.f] = "а", [keys.g] = "п",
+  [keys.h] = "р", [keys.j] = "о", [keys.k] = "л", [keys.l] = "д",
+  [keys.z] = "я", [keys.x] = "ч", [keys.c] = "с", [keys.v] = "м", [keys.b] = "и",
+  [keys.n] = "т", [keys.m] = "ь", [keys.space] = " ",
+}
+
+local function russianChar(keyCode)
+  local character = russianKeys[keyCode]
+  if character and keys.isShiftDown and keys.isShiftDown() then return ru.upper(character) end
+  return character
+end
+
+local function inputLayoutName()
+  return russianInput and "РУС" or "ENG"
+end
+
 local function setStatus(text, color)
   statusText, statusColor = tostring(text or ""), color or colors.lightGray
 end
@@ -316,7 +339,7 @@ local function drawEditor(target)
       ui.line(target, textX, y, width - textX + 1, shown, colors.white, lineIndex == cursorLine and colors.black or colors.gray)
     end
   end
-  ui.line(target, 1, height, width, "F2: сохранить  F3: печать  F4: новый  Esc: файлы  Стр " .. tostring(cursorLine) .. "/" .. tostring(#document.lines), colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "F2: сохр. F3: печать F4: новый F7: " .. inputLayoutName() .. " Esc: файлы", colors.black, colors.lightGray)
 end
 
 local function drawPrompt(target)
@@ -327,7 +350,7 @@ local function drawPrompt(target)
   ui.fill(target, x, 7, boxWidth, 5, colors.black)
   ui.line(target, x + 1, 8, boxWidth - 2, prompt.label, colors.white, colors.black)
   ui.line(target, x + 1, 9, boxWidth - 2, prompt.value .. "|", colors.white, colors.blue)
-  ui.line(target, x + 1, 10, boxWidth - 2, "Enter: подтвердить  Esc: отмена", colors.lightGray, colors.black)
+  ui.line(target, x + 1, 10, boxWidth - 2, "Enter: готово  F7: " .. inputLayoutName() .. "  Esc: отмена", colors.lightGray, colors.black)
 end
 
 local function drawConfirm(target)
@@ -376,9 +399,13 @@ while true do
   if event == "term_resize" or (event == "monitor_resize" and a == monitorName) then
     draw()
   elseif prompt then
-    if event == "char" or event == "paste" then prompt.value = prompt.value .. a
+    if event == "paste" then prompt.value = prompt.value .. a
+    elseif event == "char" and not russianInput then prompt.value = prompt.value .. a
     elseif event == "key" then
-      if a == keys.backspace then prompt.value = ru.sub(prompt.value, 1, ru.len(prompt.value) - 1)
+      local character = russianInput and russianChar(a)
+      if a == keys.f7 then russianInput = not russianInput
+      elseif character then prompt.value = prompt.value .. character
+      elseif a == keys.backspace then prompt.value = ru.sub(prompt.value, 1, ru.len(prompt.value) - 1)
       elseif a == keys.enter then
         local action, value = prompt.action, prompt.value
         clearPrompt()
@@ -407,7 +434,7 @@ while true do
       setStatus("Документ удалён", colors.orange)
     end
     draw()
-  elseif event == "char" or event == "paste" then
+  elseif event == "paste" or (event == "char" and not russianInput) then
     if screen == "editor" then
       insertText(a)
       keepCursorVisible(computer)
@@ -439,7 +466,10 @@ while true do
       end
     else
       local line = document.lines[cursorLine]
-      if a == keys.f2 then saveDocument()
+      local character = russianInput and russianChar(a)
+      if a == keys.f7 then russianInput = not russianInput
+      elseif character then insertText(character)
+      elseif a == keys.f2 then saveDocument()
       elseif a == keys.f3 then printDocument()
       elseif a == keys.f4 then startPrompt("Название нового документа", "", createDocument)
       elseif a == keys.f6 then startPrompt("Новое название", document.name:gsub("%.txt$", ""), renameDocument)

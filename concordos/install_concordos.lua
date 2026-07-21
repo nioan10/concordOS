@@ -3132,6 +3132,8 @@ local fields = { name = "", output = "", outputCount = "1", line = "", ingredien
 local editingId = nil
 local plan, status, statusColor = nil, "Реестр пуст — добавь первую технологию.", colors.lightGray
 local picker = { target = nil, search = "", items = {}, page = 0, selected = 1 }
+local components, componentPage = {}, 0
+local componentPrompt = nil
 -- Five rows deliberately fit a normal 51×19 computer without covering footer.
 local PAGE_SIZE = 5
 local shiftHeld, metaHeld = false, false
@@ -3267,12 +3269,18 @@ local function choosePickerItem(item)
   if not item then return end
   if picker.target == "output" then
     fields.output = item.name
+    activeField = "output"
+    screen = "edit"
+  elseif picker.target == "component" then
+    components[#components + 1] = { item = item.name, count = 1 }
+    screen = "components"
+    activeField = nil
   else
     local separator = fields.ingredients == "" and "" or "; "
     fields.ingredients = fields.ingredients .. separator .. item.name .. " x1"
+    activeField = "ingredients"
+    screen = "edit"
   end
-  activeField = picker.target
-  screen = "edit"
   setStatus("Подставлен ID: " .. item.name, colors.lime)
 end
 
@@ -3303,6 +3311,39 @@ local function formatIngredients(items)
     result[#result + 1] = ingredient.item .. " x" .. tostring(ingredient.count)
   end
   return table.concat(result, "; ")
+end
+
+local function openComponents()
+  local parsed, invalid = parseIngredients(fields.ingredients)
+  if #invalid > 0 then
+    setStatus("Сначала исправь вручную: " .. invalid[1], colors.red)
+    return false
+  end
+  components, componentPage, activeField = parsed, 0, nil
+  screen = "components"
+  return true
+end
+
+local function saveComponents()
+  fields.ingredients = formatIngredients(components)
+  screen, activeField = "edit", "ingredients"
+  setStatus("Состав рецепта сохранён: " .. tostring(#components) .. " поз.", colors.lime)
+end
+
+local function openComponentCount(index)
+  local component = components[index]
+  if not component then return end
+  componentPrompt = { index = index, value = tostring(component.count) }
+  screen = "componentCount"
+end
+
+local function saveComponentCount()
+  local count = math.floor(tonumber(componentPrompt and componentPrompt.value) or 0)
+  if count < 1 then setStatus("Количество должно быть не меньше 1", colors.red) return end
+  components[componentPrompt.index].count = count
+  componentPrompt = nil
+  screen = "components"
+  setStatus("Количество изменено", colors.lime)
 end
 
 local function resetForm(recipe)
@@ -3411,8 +3452,9 @@ local labels = {
 local function input(width, y, key)
   ui.text(output, 2, y, labels[key], colors.lightGray, colors.gray)
   local hasPicker = key == "output" or key == "ingredients"
-  local inputWidth = hasPicker and width - 12 or width - 3
+  local inputWidth = key == "ingredients" and width - 22 or (hasPicker and width - 12 or width - 3)
   ui.line(output, 2, y + 1, inputWidth, ru.fit(fields[key] .. (activeField == key and "|" or ""), inputWidth, ""), colors.white, activeField == key and colors.blue or colors.black)
+  if key == "ingredients" then ui.button(output, width - 20, y + 1, 11, 1, "Компоненты", colors.white, colors.blue, false) end
   if hasPicker then ui.button(output, width - 9, y + 1, 8, 1, "Склад", colors.white, colors.purple, false) end
 end
 
@@ -3437,6 +3479,42 @@ local function drawStockPicker(width, height)
   if #results == 0 then ui.text(output, 2, 7, "Ничего не найдено.", colors.orange, colors.gray) end
   ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
   ui.line(output, 1, height, width, "Стр. " .. tostring(picker.page + 1) .. "/" .. tostring(pages) .. "  Enter: выбрать  Win+Space/F7: " .. inputLayoutName(), colors.black, colors.lightGray)
+end
+
+local function drawComponents(width, height)
+  header(width, "Компоненты рецепта")
+  ui.button(output, 2, 3, 15, 1, "+ Со склада", colors.white, colors.purple, false)
+  ui.button(output, 18, 3, 11, 1, "Готово", colors.white, colors.green, false)
+  local pageSize = math.max(1, math.min(8, height - 7))
+  local pages = math.max(1, math.ceil(#components / pageSize))
+  if componentPage >= pages then componentPage = pages - 1 end
+  local first = componentPage * pageSize + 1
+  if #components == 0 then
+    ui.text(output, 2, 6, "Пусто. Добавь предмет из склада.", colors.lightGray, colors.gray)
+  end
+  for row = 0, pageSize - 1 do
+    local index = first + row
+    local component = components[index]
+    if component then
+      local y = 5 + row
+      ui.line(output, 2, y, width - 15, ru.fit(component.item .. " ×" .. tostring(component.count), width - 15, ""), colors.white, colors.black)
+      ui.button(output, width - 12, y, 8, 1, "Кол-во", colors.white, colors.blue, false)
+      ui.button(output, width - 3, y, 2, 1, "X", colors.white, colors.red, false)
+    end
+  end
+  ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
+  ui.line(output, 1, height, width, "Стр. " .. tostring(componentPage + 1) .. "/" .. tostring(pages) .. "  Колесо: страницы  Enter: сохранить", colors.black, colors.lightGray)
+end
+
+local function drawComponentCount(width, height)
+  header(width, "Количество компонента")
+  local component = componentPrompt and components[componentPrompt.index]
+  ui.text(output, 2, 4, component and ru.fit(component.item, width - 3, "") or "Компонент не найден", colors.white, colors.gray)
+  ui.text(output, 2, 6, "Количество на один цикл", colors.lightGray, colors.gray)
+  ui.line(output, 2, 7, width - 3, ru.fit((componentPrompt and componentPrompt.value or "") .. "|", width - 3, ""), colors.white, colors.blue)
+  ui.button(output, 2, 10, 12, 1, "Готово", colors.white, colors.green, false)
+  ui.button(output, 15, 10, 12, 1, "Отмена", colors.white, colors.gray, false)
+  ui.line(output, 1, height, width, "Введи число. Enter: применить  ← Главная: выход", colors.black, colors.lightGray)
 end
 
 local function drawEdit(width, height)
@@ -3490,6 +3568,8 @@ local function draw()
   if screen == "list" then drawList(width, height)
   elseif screen == "edit" then drawEdit(width, height)
   elseif screen == "stock" then drawStockPicker(width, height)
+  elseif screen == "components" then drawComponents(width, height)
+  elseif screen == "componentCount" then drawComponentCount(width, height)
   else drawPlan(width, height) end
 end
 
@@ -3534,6 +3614,10 @@ while true do
       picker.page, picker.selected = 0, 1
       draw()
     end
+    if screen == "componentCount" and componentPrompt then
+      componentPrompt.value = componentPrompt.value .. tostring(a or ""):gsub("%D", "")
+      draw()
+    end
   elseif event == "key" then
     if screen == "list" then
       if a == keys.enter then openSelected()
@@ -3569,20 +3653,38 @@ while true do
       elseif a == keys.up then picker.selected = math.max(1, picker.selected - 1)
       elseif a == keys.down then picker.selected = math.min(#results, picker.selected + 1)
       elseif a == keys.enter then choosePickerItem(results[picker.selected])
-      elseif a == keys.escape then screen, activeField = "edit", picker.target
+      elseif a == keys.escape then
+        if picker.target == "component" then screen, activeField = "components", nil
+        else screen, activeField = "edit", picker.target end
+      end
+    elseif screen == "components" then
+      if a == keys.enter then saveComponents()
+      elseif a == keys.n then loadPicker("component")
+      elseif a == keys.escape then screen, activeField = "edit", "ingredients"
+      end
+    elseif screen == "componentCount" then
+      local character = inputChar(a)
+      if character and character:match("%d") then componentPrompt.value = componentPrompt.value .. character
+      elseif a == keys.backspace then componentPrompt.value = componentPrompt.value:sub(1, -2)
+      elseif a == keys.enter then saveComponentCount()
+      elseif a == keys.escape then componentPrompt, screen = nil, "components"
       end
     elseif screen == "plan" and (a == keys.enter or a == keys.escape or a == keys.q) then screen = "list" end
     draw()
-  elseif event == "mouse_scroll" and (screen == "list" or screen == "stock") then
+  elseif event == "mouse_scroll" and (screen == "list" or screen == "stock" or screen == "components") then
     if screen == "list" then
       local total = math.max(0, math.ceil(#registry.list() / PAGE_SIZE) - 1)
       page = math.max(0, math.min(total, page + (a > 0 and 1 or -1)))
       selected = math.min(math.max(1, #registry.list()), page * PAGE_SIZE + 1)
-    else
+    elseif screen == "stock" then
       local pageSize = math.max(1, math.min(7, height - 8))
       local total = math.max(0, math.ceil(#pickerResults() / pageSize) - 1)
       picker.page = math.max(0, math.min(total, picker.page + (a > 0 and 1 or -1)))
       picker.selected = picker.page * pageSize + 1
+    else
+      local pageSize = math.max(1, math.min(8, height - 7))
+      local total = math.max(0, math.ceil(#components / pageSize) - 1)
+      componentPage = math.max(0, math.min(total, componentPage + (a > 0 and 1 or -1)))
     end
     draw()
   elseif event == "mouse_click" then
@@ -3600,6 +3702,8 @@ while true do
       local key = fieldAt(y, height)
       if (key == "output" or key == "ingredients") and x >= width - 9 then
         loadPicker(key)
+      elseif key == "ingredients" and x >= width - 20 then
+        openComponents()
       elseif key then activeField = key
       elseif y == height - 3 then
         if x < 14 then saveRecipe()
@@ -3614,6 +3718,26 @@ while true do
         local item = pickerResults()[picker.page * pageSize + y - 5]
         if item then choosePickerItem(item) end
       end
+    elseif screen == "components" then
+      if y == 3 and x < 17 then
+        loadPicker("component")
+      elseif y == 3 and x < 29 then
+        saveComponents()
+      elseif y >= 5 then
+        local pageSize = math.max(1, math.min(8, height - 7))
+        local index = componentPage * pageSize + y - 4
+        if components[index] then
+          if x >= width - 3 then
+            table.remove(components, index)
+            setStatus("Компонент удалён", colors.orange)
+          elseif x >= width - 12 then
+            openComponentCount(index)
+          end
+        end
+      end
+    elseif screen == "componentCount" then
+      if y == 10 and x < 14 then saveComponentCount()
+      elseif y == 10 and x < 27 then componentPrompt, screen = nil, "components" end
     else
       screen = "list"
     end
@@ -3625,7 +3749,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.11.3",
+  version = "0.12.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },

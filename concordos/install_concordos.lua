@@ -2659,24 +2659,29 @@ local function openPreview()
   setStatus("Предпросмотр: лист " .. tostring(previewPage) .. "/" .. tostring(pages), colors.lightBlue)
 end
 
-local function printDocument()
+local function printDocument(firstPage, lastPage)
   if not document then return end
   local printer = peripheral.find("printer")
   if not printer then setStatus("Принтер CC:Tweaked не найден", colors.red) return end
   saveDocument()
-  local okPage, started = pcall(printer.newPage)
-  if not okPage or not started then
-    setStatus("Не удалось начать печать: добавь бумагу и краситель", colors.red)
-    return
-  end
   local width, height = printer.getPageSize()
   local content = printableLines(document.lines, width)
-  local index, pageCount = 1, 0
-  repeat
-    pageCount = pageCount + 1
+  local totalPages = math.max(1, math.ceil(#content / height))
+  firstPage = math.max(1, math.min(tonumber(firstPage) or 1, totalPages))
+  lastPage = math.max(firstPage, math.min(tonumber(lastPage) or totalPages, totalPages))
+  local index, printed = (firstPage - 1) * height + 1, 0
+
+  for sourcePage = firstPage, lastPage do
+    local okPage, started = pcall(printer.newPage)
+    if not okPage or not started then
+      local prefix = printed > 0 and ("Напечатано: " .. tostring(printed) .. ". ") or ""
+      setStatus(prefix .. "Добавь бумагу и краситель", colors.red)
+      return
+    end
+    printed = printed + 1
     -- Printed pages use CC:Tweaked's one-byte terminal font too. Convert only
     -- at this boundary: document files remain ordinary UTF-8 text.
-    printer.setPageTitle(ru.encode(document.name:gsub("%.txt$", "") .. " — " .. tostring(pageCount)))
+    printer.setPageTitle(ru.encode(document.name:gsub("%.txt$", "") .. " — " .. tostring(sourcePage) .. "/" .. tostring(totalPages)))
     for row = 1, height do
       local line = content[index]
       if line then
@@ -2689,15 +2694,9 @@ local function printDocument()
       setStatus("Печать остановлена: закончились бумага или чернила", colors.red)
       return
     end
-    if content[index] then
-      local nextOk, nextStarted = pcall(printer.newPage)
-      if not nextOk or not nextStarted then
-        setStatus("Напечатано страниц: " .. tostring(pageCount) .. "; нет бумаги или чернил", colors.orange)
-        return
-      end
-    end
-  until not content[index]
-  setStatus("Напечатано страниц: " .. tostring(pageCount), colors.lime)
+  end
+  local description = firstPage == lastPage and ("лист " .. tostring(firstPage)) or ("листы " .. tostring(firstPage) .. "-" .. tostring(lastPage))
+  setStatus("Напечатано: " .. description, colors.lime)
 end
 
 local function drawHeader(target, title, backLabel)
@@ -2801,9 +2800,10 @@ local function drawPreview(target)
 
   local buttonY = height - 1
   ui.button(target, 2, buttonY, 7, 1, "< Лист", colors.white, colors.gray, false)
-  ui.button(target, math.floor((width - 11) / 2) + 1, buttonY, 11, 1, "Печать", colors.white, colors.green, false)
+  ui.button(target, 10, buttonY, 11, 1, "Этот лист", colors.white, colors.green, false)
+  ui.button(target, 22, buttonY, 10, 1, "Все листы", colors.white, colors.lightBlue, false)
   ui.button(target, width - 7, buttonY, 6, 1, "Лист >", colors.white, colors.gray, false)
-  ui.line(target, 1, height, width, "Стр. " .. tostring(previewPage) .. "/" .. tostring(pages) .. "  Стрелки: лист  Enter: печать", colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "Стр. " .. tostring(previewPage) .. "/" .. tostring(pages) .. "  Enter: этот лист  F4: все", colors.black, colors.lightGray)
 end
 
 local function drawPrompt(target)
@@ -2960,7 +2960,8 @@ while true do
       local _, _, _, pages = previewData()
       if a == keys.left or a == keys.up then previewPage = math.max(1, previewPage - 1)
       elseif a == keys.right or a == keys.down then previewPage = math.min(pages, previewPage + 1)
-      elseif a == keys.enter or a == keys.f3 then printDocument() end
+      elseif a == keys.enter or a == keys.f3 then printDocument(previewPage, previewPage)
+      elseif a == keys.f4 then printDocument() end
     else
       local line = document.lines[cursorLine]
       local character = russianInput and russianChar(a)
@@ -3058,7 +3059,8 @@ while true do
       if y == height - 1 then
         if x <= 8 then previewPage = math.max(1, previewPage - 1)
         elseif x >= width - 7 then previewPage = math.min(pages, previewPage + 1)
-        elseif x >= math.floor((width - 11) / 2) + 1 and x <= math.floor((width - 11) / 2) + 11 then printDocument() end
+        elseif x >= 10 and x <= 20 then printDocument(previewPage, previewPage)
+        elseif x >= 22 and x <= 31 then printDocument() end
       end
     else
       local width = target.getSize()
@@ -3089,7 +3091,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.10.0",
+  version = "0.10.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

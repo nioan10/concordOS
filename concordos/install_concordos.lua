@@ -2433,13 +2433,24 @@ local function editorGeometry(target)
   return width, height, 5, math.max(1, height - 6), 5
 end
 
+local function paperSize()
+  local printer = peripheral.find("printer")
+  if printer then
+    local ok, width, height = pcall(printer.getPageSize)
+    if ok and type(width) == "number" and type(height) == "number" then return width, height end
+  end
+  -- Standard CC:Tweaked printer dimensions, used before a printer is attached.
+  return 25, 21
+end
+
 local function lineCapacity()
-  local capacity = math.huge
+  local capacity = paperSize()
   for _, target in ipairs(outputs) do
     local width = target.getSize()
-    capacity = math.min(capacity, math.max(8, width - 4))
+    -- One extra cell is reserved for the visible right edge of the page.
+    capacity = math.min(capacity, math.max(1, width - 5))
   end
-  return capacity == math.huge and 8 or capacity
+  return capacity
 end
 
 local function keepCursorVisible(target)
@@ -2660,6 +2671,7 @@ end
 
 local function drawEditor(target)
   local width, height, firstRow, rows, textX = editorGeometry(target)
+  local contentWidth, paperHeight = lineCapacity(), select(2, paperSize())
   drawHeader(target, "Текстовый редактор", "< Файлы")
   ui.line(target, 1, 3, width, (document.changed and "* " or "") .. document.name, colors.white, colors.gray)
   local part = math.floor((width - 3) / 3)
@@ -2672,17 +2684,21 @@ local function drawEditor(target)
     local line = document.lines[lineIndex]
     if line then
       ui.text(target, 1, y, ru.fit(tostring(lineIndex), 3, ""), colors.lightGray, colors.gray, 3)
-      local shown = ru.sub(line, scrollCol, scrollCol + width - textX)
+      local shown = ru.sub(line, scrollCol, scrollCol + contentWidth - 1)
       if lineIndex == cursorLine then
         local position = cursorCol - scrollCol + 1
-        if position >= 1 and position <= width - textX then
+        if position >= 1 and position <= contentWidth then
           shown = ru.sub(shown, 1, position - 1) .. "|" .. ru.sub(shown, position)
         end
       end
-      ui.line(target, textX, y, width - textX + 1, shown, colors.white, lineIndex == cursorLine and colors.black or colors.gray)
+      local background = lineIndex == cursorLine and colors.black or colors.gray
+      ui.line(target, textX, y, contentWidth, shown, colors.white, background)
+      ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, background)
+    else
+      ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, colors.gray)
     end
   end
-  ui.line(target, 1, height, width, "F2: сохр. F3: печать F7: " .. inputLayoutName() .. " Ctrl+Z/Y: отмена  < Файлы", colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "Лист: " .. tostring(contentWidth) .. "x" .. tostring(paperHeight) .. " | край  F2: сохр. F3: печать F7: " .. inputLayoutName(), colors.black, colors.lightGray)
 end
 
 local function drawPrompt(target)
@@ -2925,7 +2941,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.8.1",
+  version = "0.8.2",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

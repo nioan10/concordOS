@@ -360,12 +360,14 @@ local function printDocument()
   local index, pageCount = 1, 0
   repeat
     pageCount = pageCount + 1
-    printer.setPageTitle(document.name:gsub("%.txt$", "") .. " — " .. tostring(pageCount))
+    -- Printed pages use CC:Tweaked's one-byte terminal font too. Convert only
+    -- at this boundary: document files remain ordinary UTF-8 text.
+    printer.setPageTitle(ru.encode(document.name:gsub("%.txt$", "") .. " — " .. tostring(pageCount)))
     for row = 1, height do
       local line = content[index]
       if line then
         printer.setCursorPos(1, row)
-        printer.write(line)
+        printer.write(ru.encode(line))
         index = index + 1
       end
     end

@@ -2596,12 +2596,14 @@ local function printDocument()
   local index, pageCount = 1, 0
   repeat
     pageCount = pageCount + 1
-    printer.setPageTitle(document.name:gsub("%.txt$", "") .. " — " .. tostring(pageCount))
+    -- Printed pages use CC:Tweaked's one-byte terminal font too. Convert only
+    -- at this boundary: document files remain ordinary UTF-8 text.
+    printer.setPageTitle(ru.encode(document.name:gsub("%.txt$", "") .. " — " .. tostring(pageCount)))
     for row = 1, height do
       local line = content[index]
       if line then
         printer.setCursorPos(1, row)
-        printer.write(line)
+        printer.write(ru.encode(line))
         index = index + 1
       end
     end
@@ -2923,7 +2925,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.8.0",
+  version = "0.8.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

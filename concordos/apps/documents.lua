@@ -15,6 +15,8 @@ local document = nil
 local cursorLine, cursorCol, scrollLine, scrollCol = 1, 1, 1, 1
 local prompt, confirmDelete = nil, nil
 local statusText, statusColor = "Готово", colors.lightGray
+local undoStack, redoStack = {}, {}
+local shiftHeld, ctrlHeld = false, false
 
 -- CC:Tweaked on some clients only sends Latin characters from the physical
 -- keyboard.  Keep a small, self-contained Russian layout for documents so
@@ -41,7 +43,18 @@ for _, item in ipairs({
 end
 
 local function shiftDown()
-  return keys.isShiftDown and keys.isShiftDown()
+  return shiftHeld or (keys.isShiftDown and keys.isShiftDown())
+end
+
+local function ctrlDown()
+  return ctrlHeld or (keys.isCtrlDown and keys.isCtrlDown())
+end
+
+local function isNamedKey(keyCode, ...)
+  for _, name in ipairs({ ... }) do
+    if keys[name] and keyCode == keys[name] then return true end
+  end
+  return false
 end
 
 local function russianChar(keyCode)
@@ -146,6 +159,7 @@ local function openDocument(name)
   local lines, err = readLines(path)
   if not lines then setStatus(err, colors.red) return end
   document = { name = fs.getName(path), path = path, lines = lines, changed = false }
+  undoStack, redoStack = {}, {}
   cursorLine, cursorCol, scrollLine, scrollCol = 1, 1, 1, 1
   screen = "editor"
   setStatus("Открыт: " .. document.name, colors.lime)
@@ -160,6 +174,7 @@ local function createDocument(name)
     index = index + 1
   end
   document = { name = fs.getName(path), path = path, lines = { "" }, changed = true }
+  undoStack, redoStack = {}, {}
   cursorLine, cursorCol, scrollLine, scrollCol = 1, 1, 1, 1
   screen = "editor"
   setStatus("Создан новый документ", colors.lime)
@@ -182,14 +197,77 @@ local function editorGeometry(target)
   return width, height, 5, math.max(1, height - 6), 5
 end
 
+local function lineCapacity()
+  local capacity = math.huge
+  for _, target in ipairs(outputs) do
+    local width = target.getSize()
+    capacity = math.min(capacity, math.max(8, width - 4))
+  end
+  return capacity == math.huge and 8 or capacity
+end
+
 local function keepCursorVisible(target)
-  local width, _, firstRow, rows, textX = editorGeometry(target)
-  local available = math.max(1, width - textX)
+  local _, _, firstRow, rows = editorGeometry(target)
   if cursorLine < scrollLine then scrollLine = cursorLine end
   if cursorLine >= scrollLine + rows then scrollLine = cursorLine - rows + 1 end
-  if cursorCol < scrollCol then scrollCol = cursorCol end
-  if cursorCol >= scrollCol + available then scrollCol = cursorCol - available + 1 end
-  scrollLine, scrollCol = math.max(1, scrollLine), math.max(1, scrollCol)
+  scrollLine, scrollCol = math.max(1, scrollLine), 1
+end
+
+local function snapshot()
+  local lines = {}
+  for index, line in ipairs(document.lines) do lines[index] = line end
+  return { lines = lines, cursorLine = cursorLine, cursorCol = cursorCol, changed = document.changed }
+end
+
+local function rememberEdit()
+  if not document then return end
+  undoStack[#undoStack + 1] = snapshot()
+  if #undoStack > 80 then table.remove(undoStack, 1) end
+  redoStack = {}
+end
+
+local function restoreSnapshot(state)
+  document.lines, cursorLine, cursorCol, document.changed = state.lines, state.cursorLine, state.cursorCol, state.changed
+end
+
+local function undo()
+  if #undoStack == 0 then setStatus("Нечего отменять", colors.lightGray) return end
+  redoStack[#redoStack + 1] = snapshot()
+  restoreSnapshot(table.remove(undoStack))
+  setStatus("Отменено", colors.orange)
+end
+
+local function redo()
+  if #redoStack == 0 then setStatus("Нечего повторять", colors.lightGray) return end
+  undoStack[#undoStack + 1] = snapshot()
+  restoreSnapshot(table.remove(redoStack))
+  setStatus("Повторено", colors.lime)
+end
+
+local function autoWrapDocument()
+  if not document then return end
+  local maximum, index = lineCapacity(), 1
+  while index <= #document.lines do
+    local line = document.lines[index]
+    if ru.len(line) <= maximum then
+      index = index + 1
+    else
+      local split = maximum
+      while split > 1 and ru.sub(line, split, split) ~= " " do split = split - 1 end
+      local splitAtSpace = ru.sub(line, split, split) == " "
+      if not splitAtSpace then split = maximum end
+      local before = ru.sub(line, 1, splitAtSpace and split - 1 or split)
+      local after = ru.sub(line, split + 1)
+      document.lines[index] = before
+      table.insert(document.lines, index + 1, after)
+      if cursorLine == index and cursorCol > split then
+        cursorLine, cursorCol = index + 1, cursorCol - split
+      elseif cursorLine > index then
+        cursorLine = cursorLine + 1
+      end
+      index = index + 1
+    end
+  end
 end
 
 local function insertPiece(piece)
@@ -215,6 +293,7 @@ local function insertText(text)
     insertPiece(part)
   end
   document.changed = true
+  autoWrapDocument()
 end
 
 local function backspace()
@@ -231,6 +310,7 @@ local function backspace()
     cursorLine = cursorLine - 1
   end
   document.changed = true
+  autoWrapDocument()
 end
 
 local function deleteChar()
@@ -243,6 +323,7 @@ local function deleteChar()
     table.remove(document.lines, cursorLine + 1)
   end
   document.changed = true
+  autoWrapDocument()
 end
 
 local function wrapLine(line, width)
@@ -363,7 +444,7 @@ local function drawEditor(target)
       ui.line(target, textX, y, width - textX + 1, shown, colors.white, lineIndex == cursorLine and colors.black or colors.gray)
     end
   end
-  ui.line(target, 1, height, width, "F2: сохр. F3: печать F4: новый F7: " .. inputLayoutName() .. "  < Файлы: выход", colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "F2: сохр. F3: печать F7: " .. inputLayoutName() .. " Ctrl+Z/Y: отмена  < Файлы", colors.black, colors.lightGray)
 end
 
 local function drawPrompt(target)
@@ -422,7 +503,15 @@ draw()
 
 while true do
   local event, a, b, c = os.pullEventRaw()
+  if event == "key" then
+    if isNamedKey(a, "leftShift", "rightShift") then shiftHeld = true end
+    if isNamedKey(a, "leftCtrl", "rightCtrl") then ctrlHeld = true end
+  elseif event == "key_up" then
+    if isNamedKey(a, "leftShift", "rightShift") then shiftHeld = false end
+    if isNamedKey(a, "leftCtrl", "rightCtrl") then ctrlHeld = false end
+  end
   if event == "term_resize" or (event == "monitor_resize" and a == monitorName) then
+    if screen == "editor" and document then autoWrapDocument() end
     draw()
   elseif prompt then
     if event == "paste" then prompt.value = prompt.value .. a
@@ -468,6 +557,7 @@ while true do
     draw()
   elseif event == "paste" or (event == "char" and not russianInput) then
     if screen == "editor" then
+      rememberEdit()
       insertText(a)
       keepCursorVisible(computer)
       draw()
@@ -492,17 +582,26 @@ while true do
     else
       local line = document.lines[cursorLine]
       local character = russianInput and russianChar(a)
-      if a == keys.f7 then russianInput = not russianInput
-      elseif character then insertText(character)
+      if ctrlDown() and a == keys.z then undo()
+      elseif ctrlDown() and a == keys.y then redo()
+      elseif a == keys.f7 then russianInput = not russianInput
+      elseif character then
+        rememberEdit()
+        insertText(character)
       elseif a == keys.f2 then saveDocument()
       elseif a == keys.f3 then printDocument()
       elseif a == keys.f4 then startPrompt("Название нового документа", "", createDocument)
       elseif a == keys.f6 then startPrompt("Новое название", document.name:gsub("%.txt$", ""), renameDocument)
       elseif a == keys.enter then
+        rememberEdit()
         newLine()
         document.changed = true
-      elseif a == keys.backspace then backspace()
-      elseif a == keys.delete then deleteChar()
+      elseif a == keys.backspace then
+        rememberEdit()
+        backspace()
+      elseif a == keys.delete then
+        rememberEdit()
+        deleteChar()
       elseif a == keys.left then cursorCol = math.max(1, cursorCol - 1)
       elseif a == keys.right then cursorCol = math.min(ru.len(line) + 1, cursorCol + 1)
       elseif a == keys.up then

@@ -1,7 +1,7 @@
 return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.7.3",
+  version = "0.8.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

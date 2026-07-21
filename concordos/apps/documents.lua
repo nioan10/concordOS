@@ -448,7 +448,9 @@ local function printDocument(firstPage, lastPage)
     printed = printed + 1
     -- Printed pages use CC:Tweaked's one-byte terminal font too. Convert only
     -- at this boundary: document files remain ordinary UTF-8 text.
-    printer.setPageTitle(ru.encode(document.name:gsub("%.txt$", "") .. " — " .. tostring(sourcePage) .. "/" .. tostring(totalPages)))
+    -- Page body uses CC's terminal glyph table, while the item title is
+    -- rendered by Minecraft's normal Unicode font. Keep the title as UTF-8.
+    printer.setPageTitle(document.name:gsub("%.txt$", "") .. " — " .. tostring(sourcePage) .. "/" .. tostring(totalPages))
     for row = 1, height do
       local line = content[index]
       if line then

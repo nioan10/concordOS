@@ -297,16 +297,33 @@ local function newLine()
   cursorLine, cursorCol = cursorLine + 1, 1
 end
 
+local function clipboardLines(value)
+  -- Clipboard text can arrive with Windows (CRLF), Unix (LF), or legacy Mac
+  -- (CR) line endings. Treat all of them as real document line breaks.
+  local text = tostring(value or ""):gsub("\r\n", "\n"):gsub("\r", "\n")
+  local result, start = {}, 1
+  while true do
+    local finish = text:find("\n", start, true)
+    if not finish then
+      result[#result + 1] = text:sub(start)
+      break
+    end
+    result[#result + 1] = text:sub(start, finish - 1)
+    start = finish + 1
+  end
+  return result
+end
+
 local function insertText(text)
   if not document then return end
-  text = tostring(text or ""):gsub("\r", "")
-  local first = true
-  for part in (text .. "\n"):gmatch("(.-)\n") do
-    if first then first = false else newLine() end
+  local parts = clipboardLines(text)
+  for index, part in ipairs(parts) do
+    if index > 1 then newLine() end
     insertPiece(part)
   end
   document.changed = true
   autoWrapDocument()
+  return #parts
 end
 
 local function backspace()
@@ -639,9 +656,11 @@ while true do
         draw()
       else
       rememberEdit()
-      insertText(text)
+      local insertedLines = insertText(text)
       keepCursorVisible(computer)
-      if event == "paste" then setStatus("Вставлено из буфера: " .. tostring(ru.len(text)) .. " симв.", colors.lime) end
+      if event == "paste" then
+        setStatus("Вставлено: " .. tostring(insertedLines) .. " строк, " .. tostring(ru.len(text)) .. " симв.", colors.lime)
+      end
       draw()
       end
     end

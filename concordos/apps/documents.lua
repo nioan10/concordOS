@@ -29,9 +29,26 @@ local russianKeys = {
   [keys.n] = "т", [keys.m] = "ь", [keys.space] = " ",
 }
 
+-- These names exist in CC:Tweaked, but the checks keep the editor compatible
+-- with older key tables as well.
+for _, item in ipairs({
+  { "zero", "0" }, { "one", "1" }, { "two", "2" }, { "three", "3" }, { "four", "4" },
+  { "five", "5" }, { "six", "6" }, { "seven", "7" }, { "eight", "8" }, { "nine", "9" },
+  { "grave", "ё" }, { "leftBracket", "х" }, { "rightBracket", "ъ" }, { "semicolon", "ж" },
+  { "apostrophe", "э" }, { "comma", "б" }, { "period", "ю" }, { "minus", "-" }, { "equals", "=" },
+}) do
+  if keys[item[1]] then russianKeys[keys[item[1]]] = item[2] end
+end
+
+local function shiftDown()
+  return keys.isShiftDown and keys.isShiftDown()
+end
+
 local function russianChar(keyCode)
+  -- On the standard Russian PC layout this physical key produces . or ,.
+  if keys.slash and keyCode == keys.slash then return shiftDown() and "," or "." end
   local character = russianKeys[keyCode]
-  if character and keys.isShiftDown and keys.isShiftDown() then return ru.upper(character) end
+  if character and shiftDown() then return ru.upper(character) end
   return character
 end
 

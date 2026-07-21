@@ -2870,6 +2870,18 @@ end
 scanFiles()
 draw()
 
+local function showCrash(message)
+  for _, target in ipairs(outputs) do
+    local width, height = target.getSize()
+    ui.clear(target, colors.black)
+    ui.line(target, 1, 1, width, "ConcordOS | Ошибка документов", colors.white, colors.red)
+    ui.line(target, 2, 3, width - 2, "Программа осталась открытой.", colors.white, colors.black)
+    ui.line(target, 2, 5, width - 2, ru.fit(tostring(message), width - 4, "..."), colors.red, colors.black)
+    ui.line(target, 2, height, width - 2, "Сфотографируй эту строку. Любая клавиша: выход", colors.lightGray, colors.black)
+  end
+end
+
+local completed, crash = xpcall(function()
 while true do
   local event, a, b, c = os.pullEventRaw()
   if event == "key" then
@@ -3094,11 +3106,17 @@ while true do
   elseif event == "terminate" then
     return
   end
+end
+end, function(message) return tostring(message) end)
+
+if not completed then
+  showCrash(crash)
+  os.pullEventRaw()
 end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.10.2",
+  version = "0.10.3",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

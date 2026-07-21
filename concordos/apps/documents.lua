@@ -18,6 +18,7 @@ local prompt, confirmDelete = nil, nil
 local statusText, statusColor = "Готово", colors.lightGray
 local undoStack, redoStack = {}, {}
 local shiftHeld, ctrlHeld = false, false
+local awaitingPaste = false
 
 -- CC:Tweaked on some clients only sends Latin characters from the physical
 -- keyboard.  Keep a small, self-contained Russian layout for documents so
@@ -631,10 +632,18 @@ while true do
     draw()
   elseif event == "paste" or (event == "char" and not russianInput) then
     if screen == "editor" then
+      local text = tostring(a or "")
+      awaitingPaste = false
+      if event == "paste" and text == "" then
+        setStatus("Буфер пуст", colors.orange)
+        draw()
+      else
       rememberEdit()
-      insertText(a)
+      insertText(text)
       keepCursorVisible(computer)
+      if event == "paste" then setStatus("Вставлено из буфера: " .. tostring(ru.len(text)) .. " симв.", colors.lime) end
       draw()
+      end
     end
   elseif event == "key" then
     if screen == "files" then
@@ -666,6 +675,8 @@ while true do
       elseif ctrlDown() and a == keys.v then
         -- Do not turn Ctrl+V into the Russian letter "м". The paste event
         -- below inserts the clipboard contents as one undoable operation.
+        awaitingPaste = true
+        setStatus("Ожидание текста из буфера...", colors.orange)
       elseif a == keys.f7 then russianInput = not russianInput
       elseif character then
         rememberEdit()

@@ -210,13 +210,11 @@ local function paperSize()
 end
 
 local function lineCapacity()
-  local capacity = paperSize()
-  for _, target in ipairs(outputs) do
-    local width = target.getSize()
-    -- One extra cell is reserved for the visible right edge of the page.
-    capacity = math.min(capacity, math.max(1, width - 5))
-  end
-  return capacity
+  -- The document is laid out for paper, not for the smallest mirrored screen.
+  -- A small computer may show only part of the line, but must never force a
+  -- narrower line break than the printer itself uses.
+  local width = paperSize()
+  return width
 end
 
 local function keepCursorVisible(target)
@@ -469,6 +467,8 @@ end
 local function drawEditor(target)
   local width, height, firstRow, rows, textX = editorGeometry(target)
   local contentWidth, paperHeight = lineCapacity(), select(2, paperSize())
+  local hasPageEdge = textX + contentWidth <= width
+  local visibleWidth = hasPageEdge and contentWidth or math.max(1, width - textX + 1)
   drawHeader(target, "Текстовый редактор", "< Файлы")
   ui.line(target, 1, 3, width, (document.changed and "* " or "") .. document.name, colors.white, colors.gray)
   local part = math.floor((width - 3) / 3)
@@ -481,26 +481,26 @@ local function drawEditor(target)
     local line = document.lines[lineIndex]
     if line then
       ui.text(target, 1, y, ru.fit(tostring(lineIndex), 3, ""), colors.lightGray, colors.gray, 3)
-      local shown = ru.sub(line, scrollCol, scrollCol + contentWidth - 1)
+      local shown = ru.sub(line, scrollCol, scrollCol + visibleWidth - 1)
       if lineIndex == cursorLine then
         local position = cursorCol - scrollCol + 1
-        if position >= 1 and position <= contentWidth then
+        if position >= 1 and position <= visibleWidth then
           shown = ru.sub(shown, 1, position - 1) .. "|" .. ru.sub(shown, position)
         end
       end
       local background = lineIndex == cursorLine and colors.black or colors.gray
-      ui.line(target, textX, y, contentWidth, shown, colors.white, background)
-      ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, background)
+      ui.line(target, textX, y, visibleWidth, shown, colors.white, background)
+      if hasPageEdge then ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, background) end
       local page = math.floor((lineIndex - 1) / paperHeight) + 1
       local marker = ""
       if (lineIndex - 1) % paperHeight == 0 then marker = " Лист " .. tostring(page)
       elseif lineIndex % paperHeight == 0 then marker = " <- конец " .. tostring(page) end
-      if textX + contentWidth < width then ui.line(target, textX + contentWidth + 1, y, width - textX - contentWidth, marker, colors.orange, background) end
+      if hasPageEdge and textX + contentWidth < width then ui.line(target, textX + contentWidth + 1, y, width - textX - contentWidth, marker, colors.orange, background) end
     else
-      ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, colors.gray)
+      if hasPageEdge then ui.line(target, textX + contentWidth, y, 1, "|", colors.lightGray, colors.gray) end
       local page = math.floor((lineIndex - 1) / paperHeight) + 1
       local marker = (lineIndex - 1) % paperHeight == 0 and (" Лист " .. tostring(page)) or ""
-      if textX + contentWidth < width then ui.line(target, textX + contentWidth + 1, y, width - textX - contentWidth, marker, colors.orange, colors.gray) end
+      if hasPageEdge and textX + contentWidth < width then ui.line(target, textX + contentWidth + 1, y, width - textX - contentWidth, marker, colors.orange, colors.gray) end
     end
   end
   ui.line(target, 1, height, width, "Лист: " .. tostring(contentWidth) .. "x" .. tostring(paperHeight) .. " | край  F2: сохр. F3: просмотр F7: " .. inputLayoutName(), colors.black, colors.lightGray)

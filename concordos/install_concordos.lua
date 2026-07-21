@@ -2699,6 +2699,13 @@ local function printDocument(firstPage, lastPage)
   setStatus("Напечатано: " .. description, colors.lime)
 end
 
+local function tryPrint(firstPage, lastPage)
+  local ok, err = pcall(printDocument, firstPage, lastPage)
+  if not ok then
+    setStatus("Ошибка печати: " .. tostring(err), colors.red)
+  end
+end
+
 local function drawHeader(target, title, backLabel)
   local width = target.getSize()
   ui.line(target, 1, 1, width, "ConcordOS | " .. title, colors.white, colors.blue)
@@ -2960,8 +2967,8 @@ while true do
       local _, _, _, pages = previewData()
       if a == keys.left or a == keys.up then previewPage = math.max(1, previewPage - 1)
       elseif a == keys.right or a == keys.down then previewPage = math.min(pages, previewPage + 1)
-      elseif a == keys.enter or a == keys.f3 then printDocument(previewPage, previewPage)
-      elseif a == keys.f4 then printDocument() end
+      elseif a == keys.enter or a == keys.f3 then tryPrint(previewPage, previewPage)
+      elseif a == keys.f4 then tryPrint() end
     else
       local line = document.lines[cursorLine]
       local character = russianInput and russianChar(a)
@@ -3059,8 +3066,8 @@ while true do
       if y == height - 1 then
         if x <= 8 then previewPage = math.max(1, previewPage - 1)
         elseif x >= width - 7 then previewPage = math.min(pages, previewPage + 1)
-        elseif x >= 10 and x <= 20 then printDocument(previewPage, previewPage)
-        elseif x >= 22 and x <= 31 then printDocument() end
+        elseif x >= 10 and x <= 20 then tryPrint(previewPage, previewPage)
+        elseif x >= 22 and x <= 31 then tryPrint() end
       end
     else
       local width = target.getSize()
@@ -3091,7 +3098,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.10.1",
+  version = "0.10.2",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

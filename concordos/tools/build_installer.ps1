@@ -13,11 +13,13 @@ $files = @(
     @{ Source = 'apps/inspect.lua'; Destination = '/concordos/apps/inspect.lua' },
     @{ Source = 'apps/power.lua'; Destination = '/concordos/apps/power.lua' },
     @{ Source = 'apps/documents.lua'; Destination = '/concordos/apps/documents.lua' },
+    @{ Source = 'apps/recipes.lua'; Destination = '/concordos/apps/recipes.lua' },
     @{ Source = 'system/config.lua'; Destination = '/concordos/system/config.lua' },
     @{ Source = 'system/boot.lua'; Destination = '/concordos/system/boot.lua' },
     @{ Source = 'system/desktop.lua'; Destination = '/concordos/system/desktop.lua' },
     @{ Source = 'system/order_service.lua'; Destination = '/concordos/system/order_service.lua' },
     @{ Source = 'system/lib/orders.lua'; Destination = '/concordos/system/lib/orders.lua' },
+    @{ Source = 'system/lib/recipes.lua'; Destination = '/concordos/system/lib/recipes.lua' },
     @{ Source = 'system/lib/ru.lua'; Destination = '/concordos/system/lib/ru.lua' },
     @{ Source = 'system/lib/ui.lua'; Destination = '/concordos/system/lib/ui.lua' }
 )

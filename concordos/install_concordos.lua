@@ -3131,7 +3131,50 @@ local activeField = nil
 local fields = { name = "", output = "", outputCount = "1", line = "", ingredients = "", duration = "" }
 local editingId = nil
 local plan, status, statusColor = nil, "Реестр пуст — добавь первую технологию.", colors.lightGray
-local PAGE_SIZE = 6
+-- Five rows deliberately fit a normal 51×19 computer without covering footer.
+local PAGE_SIZE = 5
+local shiftHeld = false
+local russianInput = true
+
+-- CC:Tweaked often receives the physical Latin key even when the player uses
+-- a Russian keyboard. Keep text fields independent from the client layout.
+local russianKeys = {
+  [keys.q] = "й", [keys.w] = "ц", [keys.e] = "у", [keys.r] = "к", [keys.t] = "е",
+  [keys.y] = "н", [keys.u] = "г", [keys.i] = "ш", [keys.o] = "щ", [keys.p] = "з",
+  [keys.a] = "ф", [keys.s] = "ы", [keys.d] = "в", [keys.f] = "а", [keys.g] = "п",
+  [keys.h] = "р", [keys.j] = "о", [keys.k] = "л", [keys.l] = "д",
+  [keys.z] = "я", [keys.x] = "ч", [keys.c] = "с", [keys.v] = "м", [keys.b] = "и",
+  [keys.n] = "т", [keys.m] = "ь", [keys.space] = " ",
+}
+for _, item in ipairs({
+  { "zero", "0" }, { "one", "1" }, { "two", "2" }, { "three", "3" }, { "four", "4" },
+  { "five", "5" }, { "six", "6" }, { "seven", "7" }, { "eight", "8" }, { "nine", "9" },
+  { "grave", "ё" }, { "leftBracket", "х" }, { "rightBracket", "ъ" }, { "semicolon", "ж" },
+  { "apostrophe", "э" }, { "comma", "б" }, { "period", "ю" }, { "minus", "-" }, { "equals", "=" },
+}) do
+  if keys[item[1]] then russianKeys[keys[item[1]]] = item[2] end
+end
+
+local function shiftDown()
+  return shiftHeld or (keys.isShiftDown and keys.isShiftDown())
+end
+
+local function namedKey(keyCode, ...)
+  for _, name in ipairs({ ... }) do
+    if keys[name] and keyCode == keys[name] then return true end
+  end
+  return false
+end
+
+local function russianChar(keyCode)
+  if keys.slash and keyCode == keys.slash then return shiftDown() and "," or "." end
+  local character = russianKeys[keyCode]
+  return character and (shiftDown() and ru.upper(character) or character) or nil
+end
+
+local function inputLayoutName()
+  return russianInput and "РУС" or "ENG"
+end
 
 local function homeButton(width)
   local size = width >= 40 and 11 or 3
@@ -3282,17 +3325,17 @@ end
 local function drawEdit(width, height)
   header(width, editingId and "Правка рецепта" or "Новый рецепт")
   input(width, 3, "name")
-  input(width, 6, "output")
-  input(width, 9, "outputCount")
-  input(width, 12, "line")
-  input(width, 15, "ingredients")
-  if height >= 25 then input(width, 18, "duration") end
+  input(width, 5, "output")
+  input(width, 7, "outputCount")
+  input(width, 9, "line")
+  input(width, 11, "ingredients")
+  if height >= 21 then input(width, 13, "duration") end
   local y = height - 3
   ui.button(output, 2, y, 12, 1, "Сохранить", colors.white, colors.green, false)
   ui.button(output, 15, y, 12, 1, "Отмена", colors.white, colors.gray, false)
   if editingId then ui.button(output, width - 11, y, 10, 1, "Удалить", colors.white, colors.red, false) end
   ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
-  ui.line(output, 1, height, width, "Tab: поле  F2: сохранить  F3: расчёт  ← Главная: выход", colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, "Tab: поле  F2: сохр. F3: расчёт F7: " .. inputLayoutName(), colors.black, colors.lightGray)
 end
 
 local function sortedMaterials(materials)
@@ -3345,8 +3388,8 @@ local function openSelected()
 end
 
 local function fieldAt(y, height)
-  local rows = { [4] = "name", [7] = "output", [10] = "outputCount", [13] = "line", [16] = "ingredients" }
-  if height >= 25 then rows[19] = "duration" end
+  local rows = { [4] = "name", [6] = "output", [8] = "outputCount", [10] = "line", [12] = "ingredients" }
+  if height >= 21 then rows[14] = "duration" end
   return rows[y]
 end
 
@@ -3354,9 +3397,14 @@ draw()
 while true do
   local event, a, b, c = os.pullEventRaw()
   local width, height = output.getSize()
+  if event == "key" and namedKey(a, "leftShift", "rightShift") then
+    shiftHeld = true
+  elseif event == "key_up" and namedKey(a, "leftShift", "rightShift") then
+    shiftHeld = false
+  end
   if event == "term_resize" then
     draw()
-  elseif event == "char" or event == "paste" then
+  elseif event == "paste" or (event == "char" and not russianInput) then
     if screen == "edit" and activeField then fields[activeField] = fields[activeField] .. a draw() end
   elseif event == "key" then
     if screen == "list" then
@@ -3367,7 +3415,10 @@ while true do
       elseif a == keys.down then chooseRecipe(1)
       elseif a == keys.escape or a == keys.q then return end
     elseif screen == "edit" then
-      if a == keys.tab then
+      local character = russianInput and russianChar(a)
+      if a == keys.f7 then russianInput = not russianInput
+      elseif character and activeField then fields[activeField] = fields[activeField] .. character
+      elseif a == keys.tab then
         local index = 1
         for i, key in ipairs(fieldsOrder) do if key == activeField then index = i break end end
         activeField = fieldsOrder[index % #fieldsOrder + 1]
@@ -3414,7 +3465,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.11.0",
+  version = "0.11.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },

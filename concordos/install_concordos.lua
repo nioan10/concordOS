@@ -2255,6 +2255,7 @@ local statusText, statusColor = "Готово", colors.lightGray
 local undoStack, redoStack = {}, {}
 local shiftHeld, ctrlHeld = false, false
 local awaitingPaste = false
+local clipboardLines
 
 -- CC:Tweaked on some clients only sends Latin characters from the physical
 -- keyboard.  Keep a small, self-contained Russian layout for documents so
@@ -2418,6 +2419,41 @@ local function createDocument(name)
   setStatus("Создан новый документ", colors.lime)
 end
 
+local function uniquePath(name)
+  local path = pathFor(name)
+  local base, index = path, 2
+  while fs.exists(path) do
+    local stem = fs.getName(base):gsub("%.txt$", "")
+    path = fs.combine(DOC_ROOT, stem .. " (" .. tostring(index) .. ").txt")
+    index = index + 1
+  end
+  return path
+end
+
+local function importTransferredFiles(transferred)
+  if not transferred or not transferred.getFiles then return false, "Клиент не передал файл" end
+  local imported, lastName = 0, nil
+  for _, source in ipairs(transferred.getFiles()) do
+    local ok, content = pcall(source.readAll)
+    local sourceName = source.getName and source.getName() or "Документ.txt"
+    if source.close then source.close() end
+    if ok and type(content) == "string" then
+      local path = uniquePath(sourceName)
+      local writeOk, writeErr = pcall(writeLines, path, clipboardLines(content))
+      if writeOk then
+        imported, lastName = imported + 1, fs.getName(path)
+      else
+        setStatus("Ошибка импорта: " .. tostring(writeErr), colors.red)
+      end
+    end
+  end
+  if imported == 0 then return false, "Не удалось прочитать .txt" end
+  scanFiles()
+  openDocument(lastName)
+  setStatus("Импортировано файлов: " .. tostring(imported), colors.lime)
+  return true
+end
+
 local function saveDocument()
   if not document then return end
   local ok, err = pcall(writeLines, document.path, document.lines)
@@ -2531,7 +2567,7 @@ local function newLine()
   cursorLine, cursorCol = cursorLine + 1, 1
 end
 
-local function clipboardLines(value)
+clipboardLines = function(value)
   -- Clipboard text can arrive with Windows (CRLF), Unix (LF), or legacy Mac
   -- (CR) line endings. Treat all of them as real document line breaks.
   local text = tostring(value or ""):gsub("\r\n", "\n"):gsub("\r", "\n")
@@ -2697,7 +2733,7 @@ local function drawFiles(target)
     end
   end
   local _, height = target.getSize()
-  ui.line(target, 1, height, width, "Стр. " .. tostring(filePage + 1) .. "/" .. tostring(totalPages) .. "  Колесо: страницы  Enter: открыть  F2: новый", colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "Перетащи UTF-8 .txt в окно: импорт  ·  Стр. " .. tostring(filePage + 1) .. "/" .. tostring(totalPages), colors.black, colors.lightGray)
 end
 
 local function drawEditor(target)
@@ -2883,6 +2919,9 @@ while true do
       setStatus("Документ удалён", colors.orange)
     end
     draw()
+  elseif event == "file_transfer" then
+    importTransferredFiles(a)
+    draw()
   elseif event == "paste" or (event == "char" and not russianInput) then
     if screen == "editor" then
       local text = tostring(a or "")
@@ -3050,7 +3089,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.9.4",
+  version = "0.10.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

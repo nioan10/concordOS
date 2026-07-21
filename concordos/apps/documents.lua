@@ -134,6 +134,13 @@ local function clearPrompt()
   prompt = nil
 end
 
+local function submitPrompt()
+  if not prompt then return end
+  local action, value = prompt.action, prompt.value
+  clearPrompt()
+  action(value)
+end
+
 local function openDocument(name)
   local path = pathFor(name)
   local lines, err = readLines(path)
@@ -356,7 +363,7 @@ local function drawEditor(target)
       ui.line(target, textX, y, width - textX + 1, shown, colors.white, lineIndex == cursorLine and colors.black or colors.gray)
     end
   end
-  ui.line(target, 1, height, width, "F2: сохр. F3: печать F4: новый F7: " .. inputLayoutName() .. " Esc: файлы", colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, "F2: сохр. F3: печать F4: новый F7: " .. inputLayoutName() .. "  < Файлы: выход", colors.black, colors.lightGray)
 end
 
 local function drawPrompt(target)
@@ -367,7 +374,9 @@ local function drawPrompt(target)
   ui.fill(target, x, 7, boxWidth, 5, colors.black)
   ui.line(target, x + 1, 8, boxWidth - 2, prompt.label, colors.white, colors.black)
   ui.line(target, x + 1, 9, boxWidth - 2, prompt.value .. "|", colors.white, colors.blue)
-  ui.line(target, x + 1, 10, boxWidth - 2, "Enter: готово  F7: " .. inputLayoutName() .. "  Esc: отмена", colors.lightGray, colors.black)
+  local leftWidth = math.floor((boxWidth - 3) / 2)
+  ui.button(target, x + 1, 10, leftWidth, 1, "Отмена", colors.white, colors.gray, false)
+  ui.button(target, x + 2 + leftWidth, 10, math.ceil((boxWidth - 3) / 2), 1, "Готово", colors.white, colors.green, false)
 end
 
 local function drawConfirm(target)
@@ -423,16 +432,22 @@ while true do
       if a == keys.f7 then russianInput = not russianInput
       elseif character then prompt.value = prompt.value .. character
       elseif a == keys.backspace then prompt.value = ru.sub(prompt.value, 1, ru.len(prompt.value) - 1)
-      elseif a == keys.enter then
-        local action, value = prompt.action, prompt.value
+      elseif a == keys.enter then submitPrompt() end
+    elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
+      local target, x, y = event == "monitor_touch" and monitor or computer, b, c
+      local width = target.getSize()
+      local boxWidth = math.max(20, math.min(width - 4, 42))
+      local boxX = math.floor((width - boxWidth) / 2) + 1
+      local leftWidth = math.floor((boxWidth - 3) / 2)
+      if y == 10 and x >= boxX + 1 and x < boxX + 1 + leftWidth then
         clearPrompt()
-        action(value)
-      elseif a == keys.escape then clearPrompt() end
+      elseif y == 10 and x >= boxX + 2 + leftWidth and x < boxX + boxWidth - 1 then
+        submitPrompt()
+      end
     end
     draw()
   elseif confirmDelete then
-    if event == "key" and a == keys.escape then confirmDelete = nil
-    elseif event == "mouse_click" then
+    if event == "mouse_click" then
       local width = computer.getSize()
       local boxWidth = math.max(24, math.min(width - 4, 44))
       local x = math.floor((width - boxWidth) / 2) + 1
@@ -458,14 +473,7 @@ while true do
       draw()
     end
   elseif event == "key" then
-    if a == keys.escape then
-      if screen == "editor" then
-        screen = "files"
-        scanFiles()
-      else
-        return
-      end
-    elseif screen == "files" then
+    if screen == "files" then
       if a == keys.f2 then startPrompt("Название нового документа", "", createDocument)
       elseif a == keys.enter and entries[selected] then openDocument(entries[selected])
       elseif a == keys.up then selected = math.max(1, selected - 1)

@@ -14,6 +14,7 @@ local plan, status, statusColor = nil, "Реестр пуст — добавь �
 local picker = { target = nil, search = "", items = {}, page = 0, selected = 1 }
 local components, componentPage = {}, 0
 local componentPrompt = nil
+local knownRecipeOutputs = {}
 -- Five rows deliberately fit a normal 51×19 computer without covering footer.
 local PAGE_SIZE = 5
 local shiftHeld, metaHeld = false, false
@@ -112,7 +113,18 @@ local function itemCount(entry)
   return tonumber(entry.count or entry.amount or entry.quantity or entry.total) or 0
 end
 
+local function refreshKnownRecipeOutputs()
+  knownRecipeOutputs = {}
+  local ok, list = pcall(registry.list)
+  if ok and type(list) == "table" then
+    for _, recipe in ipairs(list) do
+      if recipe.output and recipe.output ~= "" then knownRecipeOutputs[recipe.output] = true end
+    end
+  end
+end
+
 local function loadPicker(target)
+  refreshKnownRecipeOutputs()
   picker = { target = target, search = "", items = {}, page = 0, selected = 1 }
   local ticker = peripheral.find("Create_StockTicker")
   if not ticker then
@@ -353,7 +365,11 @@ local function drawStockPicker(width, height)
     if item then
       local y = 6 + row
       local current = first + row == picker.selected
-      ui.line(output, 2, y, width - 3, ru.fit(item.name .. "  ×" .. tostring(item.count), width - 3, ""), colors.white, current and colors.blue or colors.black)
+      local background = current and colors.blue or colors.black
+      local badge = knownRecipeOutputs[item.name] and " КРАФТ" or ""
+      local labelWidth = width - 3 - (badge == "" and 0 or 7)
+      ui.line(output, 2, y, width - 3, ru.fit(item.name .. "  ×" .. tostring(item.count), labelWidth, ""), colors.white, background)
+      if badge ~= "" then ui.text(output, width - 7, y, badge, colors.lime, background) end
     end
   end
   if #results == 0 then ui.text(output, 2, 7, "Ничего не найдено.", colors.orange, colors.gray) end

@@ -3,6 +3,7 @@ local ROOT = "/concordos"
 local ui = dofile(ROOT .. "/system/lib/ui.lua")
 local ru = ui.ru
 local orders = dofile(ROOT .. "/system/lib/orders.lua")
+local recipes = dofile(ROOT .. "/system/lib/recipes.lua")
 local output = term.current()
 
 local page = "order"
@@ -19,6 +20,7 @@ local addressReturnPage = "order"
 local confirmation = false
 local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
+local producedItems = {}
 
 local tabs = {
   { id = "order", label = "Заказать" },
@@ -29,6 +31,28 @@ local tabs = {
 
 local function setStatus(text, color)
   statusText, statusColor = tostring(text or ""), color or colors.lightGray
+end
+
+local function refreshProducedItems()
+  producedItems = {}
+  local ok, list = pcall(recipes.list)
+  if ok and type(list) == "table" then
+    for _, recipe in ipairs(list) do
+      if recipe.output and recipe.output ~= "" then producedItems[recipe.output] = recipe end
+    end
+  end
+end
+
+local function isProduced(item)
+  return producedItems[tostring(item or "")] ~= nil
+end
+
+local function itemLine(y, width, label, item, foreground, background)
+  local badge = isProduced(item) and " КРАФТ" or ""
+  local labelWidth = width - 3 - (badge == "" and 0 or 7)
+  background = background or colors.black
+  ui.line(output, 2, y, width - 3, ru.fit(label, labelWidth, ""), foreground or colors.white, background)
+  if badge ~= "" then ui.text(output, width - 7, y, badge, colors.lime, background) end
 end
 
 local function parseQuantity(value)
@@ -157,6 +181,7 @@ local function drawAddresses(width)
 end
 
 local function loadCatalog()
+  refreshProducedItems()
   local ticker = getTicker()
   if not ticker then setStatus("Stock Ticker не найден", colors.red) return end
   local ok, stock = pcall(ticker.stock, true)
@@ -195,7 +220,7 @@ local function drawStock(width)
     local item = catalogResults[first + offset]
     if item then
       local label = tostring(item.displayName or itemName(item) or "?") .. " x" .. formatQuantity(itemCount(item))
-      ui.line(output, 2, 11 + offset, width - 3, ru.fit(label, width - 3, ""), colors.white, offset % 2 == 0 and colors.gray or colors.black)
+      itemLine(11 + offset, width, label, itemName(item), colors.white, offset % 2 == 0 and colors.gray or colors.black)
     end
   end
   ui.button(output, 2, 17, leftWidth, 1, "< Пред.", colors.white, colors.gray, catalogPage > 0)
@@ -203,6 +228,7 @@ local function drawStock(width)
 end
 
 local function readClipboard()
+  refreshProducedItems()
   local clipboard = getClipboard()
   if not clipboard then setStatus("Планшет Create не найден", colors.red) return false end
 
@@ -252,7 +278,7 @@ local function drawClipboard(width)
     if item then
       local mark = clipboardSelected[item.name] and "[x] " or "[ ] "
       local label = mark .. tostring(item.displayName or item.name) .. " x" .. formatQuantity(item.count)
-      ui.line(output, 2, 8 + offset, width - 3, ru.fit(label, width - 3, ""), colors.white, offset % 2 == 0 and colors.gray or colors.black)
+      itemLine(8 + offset, width, label, item.name, colors.white, offset % 2 == 0 and colors.gray or colors.black)
     end
   end
   ui.button(output, 2, 16, leftWidth, 1, "< Пред.", colors.white, colors.gray, clipboardPage > 0)

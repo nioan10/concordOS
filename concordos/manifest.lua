@@ -1,6 +1,6 @@
 -- Public ConcordOS update manifest. Served directly from the main branch.
 return {
-  version = "0.11.2",
+  version = "0.11.3",
   files = {
     { source = "startup.lua", target = "/startup" },
     { source = "update.lua", target = "/update" },

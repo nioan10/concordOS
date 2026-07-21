@@ -14,7 +14,7 @@ local plan, status, statusColor = nil, "Реестр пуст — добавь �
 local picker = { target = nil, search = "", items = {}, page = 0, selected = 1 }
 -- Five rows deliberately fit a normal 51×19 computer without covering footer.
 local PAGE_SIZE = 5
-local shiftHeld = false
+local shiftHeld, metaHeld = false, false
 local russianInput = true
 
 -- CC:Tweaked often receives the physical Latin key even when the player uses
@@ -27,6 +27,14 @@ local russianKeys = {
   [keys.z] = "я", [keys.x] = "ч", [keys.c] = "с", [keys.v] = "м", [keys.b] = "и",
   [keys.n] = "т", [keys.m] = "ь", [keys.space] = " ",
 }
+local englishKeys = {
+  [keys.q] = "q", [keys.w] = "w", [keys.e] = "e", [keys.r] = "r", [keys.t] = "t",
+  [keys.y] = "y", [keys.u] = "u", [keys.i] = "i", [keys.o] = "o", [keys.p] = "p",
+  [keys.a] = "a", [keys.s] = "s", [keys.d] = "d", [keys.f] = "f", [keys.g] = "g",
+  [keys.h] = "h", [keys.j] = "j", [keys.k] = "k", [keys.l] = "l",
+  [keys.z] = "z", [keys.x] = "x", [keys.c] = "c", [keys.v] = "v", [keys.b] = "b",
+  [keys.n] = "n", [keys.m] = "m", [keys.space] = " ",
+}
 for _, item in ipairs({
   { "zero", "0" }, { "one", "1" }, { "two", "2" }, { "three", "3" }, { "four", "4" },
   { "five", "5" }, { "six", "6" }, { "seven", "7" }, { "eight", "8" }, { "nine", "9" },
@@ -34,6 +42,16 @@ for _, item in ipairs({
   { "apostrophe", "э" }, { "comma", "б" }, { "period", "ю" }, { "minus", "-" }, { "equals", "=" },
 }) do
   if keys[item[1]] then russianKeys[keys[item[1]]] = item[2] end
+end
+for _, item in ipairs({
+  { "zero", "0", ")" }, { "one", "1", "!" }, { "two", "2", "@" }, { "three", "3", "#" },
+  { "four", "4", "$" }, { "five", "5", "%" }, { "six", "6", "^" }, { "seven", "7", "&" },
+  { "eight", "8", "*" }, { "nine", "9", "(" }, { "grave", "`", "~" }, { "leftBracket", "[", "{" },
+  { "rightBracket", "]", "}" }, { "semicolon", ";", ":" }, { "apostrophe", "'", "\"" },
+  { "comma", ",", "<" }, { "period", ".", ">" }, { "slash", "/", "?" }, { "minus", "-", "_" },
+  { "equals", "=", "+" }, { "backslash", "\\", "|" },
+}) do
+  if keys[item[1]] then englishKeys[keys[item[1]]] = { item[2], item[3] } end
 end
 
 local function shiftDown()
@@ -51,6 +69,21 @@ local function russianChar(keyCode)
   if keys.slash and keyCode == keys.slash then return shiftDown() and "," or "." end
   local character = russianKeys[keyCode]
   return character and (shiftDown() and ru.upper(character) or character) or nil
+end
+
+local function englishChar(keyCode)
+  local character = englishKeys[keyCode]
+  if type(character) == "table" then return character[shiftDown() and 2 or 1] end
+  if character and shiftDown() then return string.upper(character) end
+  return character
+end
+
+local function inputChar(keyCode)
+  return russianInput and russianChar(keyCode) or englishChar(keyCode)
+end
+
+local function isLayoutToggle(keyCode)
+  return keyCode == keys.f7 or (keyCode == keys.space and metaHeld)
 end
 
 local function inputLayoutName()
@@ -283,7 +316,7 @@ local function drawStockPicker(width, height)
   end
   if #results == 0 then ui.text(output, 2, 7, "Ничего не найдено.", colors.orange, colors.gray) end
   ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
-  ui.line(output, 1, height, width, "Стр. " .. tostring(picker.page + 1) .. "/" .. tostring(pages) .. "  Enter: выбрать  F7: " .. inputLayoutName(), colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, "Стр. " .. tostring(picker.page + 1) .. "/" .. tostring(pages) .. "  Enter: выбрать  Win+Space/F7: " .. inputLayoutName(), colors.black, colors.lightGray)
 end
 
 local function drawEdit(width, height)
@@ -299,7 +332,7 @@ local function drawEdit(width, height)
   ui.button(output, 15, y, 12, 1, "Отмена", colors.white, colors.gray, false)
   if editingId then ui.button(output, width - 11, y, 10, 1, "Удалить", colors.white, colors.red, false) end
   ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
-  ui.line(output, 1, height, width, "Tab: поле  F2: сохр. F3: расчёт F7: " .. inputLayoutName(), colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, "Tab: поле  F2: сохр.  Win+Space/F7: " .. inputLayoutName(), colors.black, colors.lightGray)
 end
 
 local function sortedMaterials(materials)
@@ -367,9 +400,14 @@ while true do
   elseif event == "key_up" and namedKey(a, "leftShift", "rightShift") then
     shiftHeld = false
   end
+  if event == "key" and namedKey(a, "leftMeta", "rightMeta", "leftWin", "rightWin", "leftSuper", "rightSuper") then
+    metaHeld = true
+  elseif event == "key_up" and namedKey(a, "leftMeta", "rightMeta", "leftWin", "rightWin", "leftSuper", "rightSuper") then
+    metaHeld = false
+  end
   if event == "term_resize" then
     draw()
-  elseif event == "paste" or (event == "char" and not russianInput) then
+  elseif event == "paste" then
     if screen == "edit" and activeField then fields[activeField] = fields[activeField] .. a draw() end
     if screen == "stock" then
       picker.search = picker.search .. a
@@ -385,8 +423,8 @@ while true do
       elseif a == keys.down then chooseRecipe(1)
       elseif a == keys.escape or a == keys.q then return end
     elseif screen == "edit" then
-      local character = russianInput and russianChar(a)
-      if a == keys.f7 then russianInput = not russianInput
+      local character = inputChar(a)
+      if isLayoutToggle(a) then russianInput = not russianInput
       elseif character and activeField then fields[activeField] = fields[activeField] .. character
       elseif a == keys.tab then
         local index = 1
@@ -399,9 +437,9 @@ while true do
       elseif a == keys.escape then screen, activeField = "list", nil
       end
     elseif screen == "stock" then
-      local character = russianInput and russianChar(a)
+      local character = inputChar(a)
       local results = pickerResults()
-      if a == keys.f7 then russianInput = not russianInput
+      if isLayoutToggle(a) then russianInput = not russianInput
       elseif character then
         picker.search = picker.search .. character
         picker.page, picker.selected = 0, 1

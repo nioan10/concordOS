@@ -2827,6 +2827,8 @@ while true do
     elseif event == "key" then
       local character = russianInput and russianChar(a)
       if a == keys.f7 then russianInput = not russianInput
+      elseif ctrlDown() and a == keys.v then
+        -- The following paste event carries the actual clipboard text.
       elseif character then prompt.value = prompt.value .. character
       elseif a == keys.backspace then prompt.value = ru.sub(prompt.value, 1, ru.len(prompt.value) - 1)
       elseif a == keys.enter then submitPrompt() end
@@ -2897,6 +2899,9 @@ while true do
       local character = russianInput and russianChar(a)
       if ctrlDown() and a == keys.z then undo()
       elseif ctrlDown() and a == keys.y then redo()
+      elseif ctrlDown() and a == keys.v then
+        -- Do not turn Ctrl+V into the Russian letter "м". The paste event
+        -- below inserts the clipboard contents as one undoable operation.
       elseif a == keys.f7 then russianInput = not russianInput
       elseif character then
         rememberEdit()
@@ -3015,7 +3020,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.9.0",
+  version = "0.9.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "terminal", title = "Терминал", subtitle = "Русская командная строка", path = "/concordos/apps/rterm.lua", color = colors.black },

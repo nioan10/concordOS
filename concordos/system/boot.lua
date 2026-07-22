@@ -70,8 +70,6 @@ end
 
 if not fs.exists(ROOT .. "/system/desktop.lua") then
   recovery("Системные файлы не найдены: " .. ROOT .. "/system/desktop.lua")
-elseif fs.exists(MARKER) then
-  if not recovery("Предыдущая загрузка не завершилась корректно.") then return end
 end
 
 writeFile(MARKER, "booting " .. tostring(os.epoch and os.epoch("utc") or os.clock()))

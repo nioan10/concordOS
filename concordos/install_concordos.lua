@@ -4000,7 +4000,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.13.0",
+  version = "0.13.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4094,8 +4094,6 @@ end
 
 if not fs.exists(ROOT .. "/system/desktop.lua") then
   recovery("Системные файлы не найдены: " .. ROOT .. "/system/desktop.lua")
-elseif fs.exists(MARKER) then
-  if not recovery("Предыдущая загрузка не завершилась корректно.") then return end
 end
 
 writeFile(MARKER, "booting " .. tostring(os.epoch and os.epoch("utc") or os.clock()))
@@ -4295,6 +4293,10 @@ local function selectDelta(delta)
 end
 
 draw()
+-- A rendered desktop means the boot itself succeeded. Clear this marker here,
+-- before an intentional os.reboot() can terminate all Lua programs at once.
+local bootMarker = ROOT .. "/.booting"
+if fs.exists(bootMarker) then fs.delete(bootMarker) end
 while true do
   local event, a, b, c = os.pullEventRaw()
   if event == "term_resize" or (event == "monitor_resize" and a == monitorName) then

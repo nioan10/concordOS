@@ -181,6 +181,10 @@ local function selectDelta(delta)
 end
 
 draw()
+-- A rendered desktop means the boot itself succeeded. Clear this marker here,
+-- before an intentional os.reboot() can terminate all Lua programs at once.
+local bootMarker = ROOT .. "/.booting"
+if fs.exists(bootMarker) then fs.delete(bootMarker) end
 while true do
   local event, a, b, c = os.pullEventRaw()
   if event == "term_resize" or (event == "monitor_resize" and a == monitorName) then

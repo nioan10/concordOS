@@ -13,6 +13,16 @@ local page = 0
 local visible = {}
 local section = "main"
 
+local function sectionApps()
+  if section == "tools" then return config.tools end
+  if section == "games" then return config.games end
+  return config.mainApps
+end
+
+local function parentSection()
+  return section == "games" and "tools" or "main"
+end
+
 local function hasAvailableApp(apps)
   for _, app in ipairs(apps or {}) do
     if app.path == "shell" or (app.path and fs.exists(app.path)) then return true end
@@ -22,9 +32,9 @@ end
 
 local function appList()
   visible = {}
-  local source = section == "tools" and config.tools or config.mainApps
+  local source = sectionApps()
   for _, app in ipairs(source or {}) do
-    local available = app.kind == "folder" and hasAvailableApp(config.tools)
+    local available = app.kind == "folder" and hasAvailableApp(config[app.section or app.id])
       or app.path == "shell" or (app.path and fs.exists(app.path))
     if available then visible[#visible + 1] = app end
   end
@@ -77,16 +87,15 @@ end
 local function drawOutput(output, isMonitor, perPage)
   local width, height, tileWidth, rows, _, _, _, _, compact, ultraCompact = appGeometry(output)
   local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
-  local sectionTitle = section == "tools" and "Инструменты и тесты" or "Главный пульт"
-  local sectionSubtitle = section == "tools"
-    and "Служебные программы и диагностика"
-    or "Заказы, производство и управление сетью"
+  local sectionTitle = section == "tools" and "Инструменты и тесты" or (section == "games" and "Игры" or "Главный пульт")
+  local sectionSubtitle = section == "tools" and "Служебные программы и диагностика"
+    or (section == "games" and "Небольшие игры для отдыха" or "Заказы, производство и управление сетью")
 
   ui.clear(output, colors.gray)
   ui.line(output, 1, 1, width,
     ultraCompact and (config.name .. " | " .. sectionTitle) or (config.name .. " | " .. config.country),
     colors.white, colors.blue)
-  if section == "tools" then
+  if section ~= "main" then
     local x, y, buttonWidth, label = backButton(output)
     ui.button(output, x, y, buttonWidth, 1, "", colors.white, colors.blue, true)
     ui.text(output, x, y, label, colors.white, colors.lightBlue)
@@ -118,7 +127,7 @@ local function drawOutput(output, isMonitor, perPage)
   end
 
   local controls
-  if section == "tools" then
+  if section ~= "main" then
     controls = isMonitor and "Коснись: открыть  Q: назад" or "Колесо: страницы  Enter: открыть  Q: назад"
   else
     controls = isMonitor and "Коснись плитки  Enter: открыть  Q: терминал" or "Колесо: страницы  Enter: открыть  Q: терминал"
@@ -141,7 +150,7 @@ local function launch(index)
   local app = visible[index]
   if not app then return end
   if app.kind == "folder" then
-    section = "tools"
+    section = app.section or app.id
     selected = 1
     page = 0
     return
@@ -182,8 +191,8 @@ while true do
     local perPage = pageCapacity()
     local mouseX, mouseY = b, c
     local backX, backY, backWidth = backButton(target)
-    if section == "tools" and ui.inside(mouseX, mouseY, backX, backY, backWidth, 1) then
-      section = "main"
+    if section ~= "main" and ui.inside(mouseX, mouseY, backX, backY, backWidth, 1) then
+      section = parentSection()
       selected = 1
       page = 0
       draw()
@@ -215,8 +224,8 @@ while true do
     elseif a == keys.down then selectDelta(2) draw()
     elseif a == keys.f5 then draw()
     elseif a == keys.q then
-      if section == "tools" then
-        section = "main"
+      if section ~= "main" then
+        section = parentSection()
         selected = 1
         page = 0
       else

@@ -10,6 +10,7 @@ $files = @(
     @{ Source = 'apps/master.lua'; Destination = '/concordos/apps/master.lua' },
     @{ Source = 'apps/master_gui.lua'; Destination = '/concordos/apps/master_gui.lua' },
     @{ Source = 'apps/mines.lua'; Destination = '/concordos/apps/mines.lua' },
+    @{ Source = 'apps/game2048.lua'; Destination = '/concordos/apps/game2048.lua' },
     @{ Source = 'apps/inspect.lua'; Destination = '/concordos/apps/inspect.lua' },
     @{ Source = 'apps/power.lua'; Destination = '/concordos/apps/power.lua' },
     @{ Source = 'apps/documents.lua'; Destination = '/concordos/apps/documents.lua' },

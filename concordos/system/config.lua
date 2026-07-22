@@ -1,7 +1,7 @@
 return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.12.1",
+  version = "0.13.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -14,8 +14,12 @@ return {
     { id = "plan", title = "План производства", subtitle = "Очередь и диспетчеризация", path = "/plan.lua", color = colors.green },
     { id = "checklist", title = "Чеклист материалов", subtitle = "Create Material Checklist", path = "/checklist.lua", color = colors.orange },
     { id = "inspect", title = "Инспектор Create", subtitle = "Периферии, методы и CC-интеграции", path = "/concordos/apps/inspect.lua", color = colors.purple },
-    { id = "mines", title = "Сапёр", subtitle = "Короткая передышка от промзоны", path = "/concordos/apps/mines.lua", color = colors.green },
+    { id = "games", title = "Игры", subtitle = "Сапёр, головоломки и отдых", kind = "folder", section = "games", color = colors.green },
     { id = "power", title = "Энергопульт", subtitle = "Нагрузка центральной сети вращения", path = "/concordos/apps/power.lua", color = colors.yellow },
     { id = "documents", title = "Документы", subtitle = "Файлы, текстовый редактор и печать", path = "/concordos/apps/documents.lua", color = colors.lightBlue },
+  },
+  games = {
+    { id = "mines", title = "Сапёр", subtitle = "Короткая передышка от промзоны", path = "/concordos/apps/mines.lua", color = colors.green },
+    { id = "2048", title = "2048", subtitle = "Спокойная числовая головоломка", path = "/concordos/apps/game2048.lua", color = colors.orange },
   },
 }

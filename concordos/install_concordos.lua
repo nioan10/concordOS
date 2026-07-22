@@ -3450,6 +3450,7 @@ local ROOT = "/concordos"
 local ui = dofile(ROOT .. "/system/lib/ui.lua")
 local ru = ui.ru
 local registry = dofile(ROOT .. "/system/lib/recipes.lua")
+local activity = dofile(ROOT .. "/system/lib/activity.lua")
 local output = term.current()
 
 local screen = "list"
@@ -3466,6 +3467,7 @@ local knownRecipeOutputs = {}
 local recipeSearch, searchActive = "", false
 local tagSelectMode, tagSelected = false, {}
 local tagInput, tagTargets, tagReturnScreen = "", {}, "list"
+local recipeLogPage = 0
 -- Dense catalog layout deliberately fits a normal 51×19 computer.
 local PAGE_SIZE = 10
 local shiftHeld, metaHeld = false, false
@@ -3806,10 +3808,11 @@ local function drawList(width, height)
   local recipes = filteredRecipes()
   ui.text(output, 2, 3, "Поиск: название, ID результата или тег", colors.lightGray, colors.gray)
   ui.line(output, 2, 4, width - 3, ru.fit(recipeSearch .. (searchActive and "|" or ""), width - 3, ""), colors.white, searchActive and colors.blue or colors.black)
-  ui.button(output, 2, 5, 11, 1, "+ Новый", colors.white, colors.green, false)
-  ui.button(output, 14, 5, 13, 1, tagSelectMode and "Отмена выбора" or "Отметить", colors.white, colors.blue, tagSelectMode)
+  ui.button(output, 2, 5, 10, 1, "+ Новый", colors.white, colors.green, false)
+  ui.button(output, 13, 5, 13, 1, tagSelectMode and "Отмена выбора" or "Отметить", colors.white, colors.blue, tagSelectMode)
   local selectedTags = #selectedTagIds()
-  ui.button(output, 28, 5, width - 29, 1, "Теги: " .. tostring(selectedTags), colors.white, colors.purple, selectedTags > 0)
+  ui.button(output, 27, 5, 12, 1, "Теги: " .. tostring(selectedTags), colors.white, colors.purple, selectedTags > 0)
+  ui.button(output, 40, 5, width - 40, 1, "Лог", colors.white, colors.lightBlue, false)
   if #recipes == 0 then
     ui.text(output, 2, 8, recipeSearch == "" and "Пока нет рецептов. Начни, например, с рельс." or "Поиск ничего не нашёл.", colors.white, colors.gray)
   else
@@ -3830,6 +3833,27 @@ local function drawList(width, height)
   local pages = math.max(1, math.ceil(#recipes / PAGE_SIZE))
   ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
   ui.line(output, 1, height, width, "Стр. " .. tostring(page + 1) .. "/" .. tostring(pages) .. "  Колесо: список  Enter: открыть  P: план", colors.black, colors.lightGray)
+end
+
+local function drawRecipeLog(width, height)
+  header(width, "Журнал рецептов")
+  ui.button(output, 2, 3, 14, 1, "← Реестр", colors.white, colors.blue, false)
+  ui.text(output, 17, 3, "Только операции с рецептами", colors.lightGray, colors.gray)
+  local entries = activity.list("recipes")
+  local pageSize = math.max(1, height - 7)
+  local pages = math.max(1, math.ceil(#entries / pageSize))
+  if recipeLogPage >= pages then recipeLogPage = pages - 1 end
+  local first = recipeLogPage * pageSize + 1
+  for row = 0, pageSize - 1 do
+    local entry = entries[first + row]
+    if entry then
+      local text = activity.timeLabel(entry.at) .. " · " .. tostring(entry.text)
+      ui.line(output, 2, 6 + row, width - 3, text, colors.white, row % 2 == 0 and colors.black or colors.gray)
+    end
+  end
+  if #entries == 0 then ui.text(output, 2, 7, "Операций с рецептами ещё не было.", colors.lightGray, colors.gray) end
+  ui.line(output, 1, height - 1, width, "Событий рецептов: " .. tostring(#entries), colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, "Стр. " .. tostring(recipeLogPage + 1) .. "/" .. tostring(pages) .. "  Колесо: страницы  ← Реестр: назад", colors.black, colors.lightGray)
 end
 
 local function drawTags(width, height)
@@ -3981,6 +4005,7 @@ end
 local function draw()
   local width, height = output.getSize()
   if screen == "list" then drawList(width, height)
+  elseif screen == "recipeLog" then drawRecipeLog(width, height)
   elseif screen == "tags" then drawTags(width, height)
   elseif screen == "edit" then drawEdit(width, height)
   elseif screen == "stock" then drawStockPicker(width, height)
@@ -4061,9 +4086,15 @@ while true do
       elseif a == keys.p then local recipe = filteredRecipes()[selected] if recipe then makePlan(recipe) end
       elseif a == keys.t then tagSelectMode = not tagSelectMode if not tagSelectMode then tagSelected = {} end
       elseif a == keys.g then openTags(selectedTagIds(), "list")
+      elseif a == keys.l then screen, recipeLogPage, searchActive = "recipeLog", 0, false
       elseif a == keys.up then chooseRecipe(-1)
       elseif a == keys.down then chooseRecipe(1)
       elseif a == keys.escape or a == keys.q then return end
+    elseif screen == "recipeLog" then
+      if a == keys.escape or a == keys.enter then screen = "list"
+      elseif a == keys.up then recipeLogPage = math.max(0, recipeLogPage - 1)
+      elseif a == keys.down then recipeLogPage = recipeLogPage + 1
+      end
     elseif screen == "tags" then
       local character = inputChar(a)
       if isLayoutToggle(a) then russianInput = not russianInput
@@ -4118,11 +4149,15 @@ while true do
       end
     elseif screen == "plan" and (a == keys.enter or a == keys.escape or a == keys.q) then screen = "list" end
     draw()
-  elseif event == "mouse_scroll" and (screen == "list" or screen == "stock" or screen == "components") then
+  elseif event == "mouse_scroll" and (screen == "list" or screen == "recipeLog" or screen == "stock" or screen == "components") then
     if screen == "list" then
       local total = math.max(0, math.ceil(#filteredRecipes() / PAGE_SIZE) - 1)
       page = math.max(0, math.min(total, page + (a > 0 and 1 or -1)))
       selected = math.min(math.max(1, #filteredRecipes()), page * PAGE_SIZE + 1)
+    elseif screen == "recipeLog" then
+      local pageSize = math.max(1, height - 7)
+      local total = math.max(0, math.ceil(#activity.list("recipes") / pageSize) - 1)
+      recipeLogPage = math.max(0, math.min(total, recipeLogPage + (a > 0 and 1 or -1)))
     elseif screen == "stock" then
       local pageSize = math.max(1, math.min(7, height - 8))
       local total = math.max(0, math.ceil(#pickerResults() / pageSize) - 1)
@@ -4141,13 +4176,15 @@ while true do
     if screen == "list" then
       if y == 4 then
         searchActive = true
-      elseif y == 5 and x < 13 then
+      elseif y == 5 and x < 12 then
         resetForm() screen = "edit"
-      elseif y == 5 and x < 27 then
+      elseif y == 5 and x < 26 then
         tagSelectMode = not tagSelectMode
         if not tagSelectMode then tagSelected = {} end
-      elseif y == 5 then
+      elseif y == 5 and x < 39 then
         openTags(selectedTagIds(), "list")
+      elseif y == 5 then
+        screen, recipeLogPage, searchActive = "recipeLog", 0, false
       elseif y >= 7 and y < 7 + PAGE_SIZE then
         local index = page * PAGE_SIZE + y - 6
         local recipe = filteredRecipes()[index]
@@ -4156,6 +4193,8 @@ while true do
           if tagSelectMode then tagSelected[recipe.id] = not tagSelected[recipe.id] else openSelected() end
         end
       end
+    elseif screen == "recipeLog" then
+      if y == 3 and x < 16 then screen = "list" end
     elseif screen == "tags" then
       if y == 6 and x < 15 then applyTag(true)
       elseif y == 6 and x < 27 then applyTag(false)
@@ -4217,7 +4256,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.15.0",
+  version = "0.15.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },

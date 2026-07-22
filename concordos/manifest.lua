@@ -1,6 +1,6 @@
 -- Public ConcordOS update manifest. Served directly from the main branch.
 return {
-  version = "0.14.0",
+  version = "0.15.0",
   files = {
     { source = "startup.lua", target = "/startup" },
     { source = "update.lua", target = "/update" },
@@ -12,12 +12,14 @@ return {
     { source = "apps/inspect.lua", target = "/concordos/apps/inspect.lua" },
     { source = "apps/power.lua", target = "/concordos/apps/power.lua" },
     { source = "apps/documents.lua", target = "/concordos/apps/documents.lua" },
+    { source = "apps/activity.lua", target = "/concordos/apps/activity.lua" },
     { source = "apps/recipes.lua", target = "/concordos/apps/recipes.lua" },
     { source = "system/config.lua", target = "/concordos/system/config.lua" },
     { source = "system/boot.lua", target = "/concordos/system/boot.lua" },
     { source = "system/desktop.lua", target = "/concordos/system/desktop.lua" },
     { source = "system/order_service.lua", target = "/concordos/system/order_service.lua" },
     { source = "system/lib/orders.lua", target = "/concordos/system/lib/orders.lua" },
+    { source = "system/lib/activity.lua", target = "/concordos/system/lib/activity.lua" },
     { source = "system/lib/recipes.lua", target = "/concordos/system/lib/recipes.lua" },
     { source = "system/lib/ru.lua", target = "/concordos/system/lib/ru.lua" },
     { source = "system/lib/ui.lua", target = "/concordos/system/lib/ui.lua" },

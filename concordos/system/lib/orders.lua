@@ -4,11 +4,16 @@ local orders = {}
 
 local ROOT = "/concordos"
 local PATH = ROOT .. "/data/orders.db"
+local activity = dofile(ROOT .. "/system/lib/activity.lua")
 local RETRY_BASE_MS = 30000
 local RETRY_MAX_MS = 120000
 local function now()
   if os.epoch then return os.epoch("utc") end
   return math.floor(os.clock() * 1000)
+end
+
+local function log(text)
+  pcall(activity.record, "orders", text)
 end
 
 local function defaultData()
@@ -74,6 +79,7 @@ function orders.create(address, item, count)
   data.orders[#data.orders + 1] = order
   rememberAddress(data, order.address)
   orders.save(data)
+  log("Создана заявка №" .. tostring(order.id) .. ": " .. order.item .. " ×" .. tostring(order.requested) .. " → " .. order.address)
   return order
 end
 
@@ -123,6 +129,7 @@ function orders.createGroup(address, items, title)
   end
   rememberAddress(data, group.address)
   orders.save(data)
+  log("Создан заказ стройки №" .. tostring(group.id) .. " «" .. group.title .. "»: " .. tostring(#created) .. " поз. → " .. group.address)
   return group, created
 end
 
@@ -161,6 +168,7 @@ function orders.cancel(id)
       order.state = "cancelled"
       order.lastResult = "Отменено оператором"
       orders.save(data)
+      log("Отменена заявка №" .. tostring(order.id) .. ": " .. order.item)
       return true
     end
   end
@@ -177,7 +185,10 @@ function orders.cancelGroup(groupId)
       changed = true
     end
   end
-  if changed then orders.save(data) end
+  if changed then
+    orders.save(data)
+    log("Отменён заказ стройки №" .. tostring(groupId))
+  end
   return changed
 end
 
@@ -188,6 +199,7 @@ function orders.retry(id)
       order.nextAttemptAt = 0
       order.lastResult = "Повтор назначен оператором"
       orders.save(data)
+      log("Назначен повтор заявки №" .. tostring(order.id) .. ": " .. order.item)
       return true
     end
   end
@@ -204,7 +216,10 @@ function orders.retryGroup(groupId)
       changed = true
     end
   end
-  if changed then orders.save(data) end
+  if changed then
+    orders.save(data)
+    log("Назначен повтор заказа стройки №" .. tostring(groupId))
+  end
   return changed
 end
 
@@ -232,6 +247,7 @@ function orders.tick(forceOrderId)
       if remaining <= 0 then
         order.state = "accepted"
         order.lastResult = "Весь объём принят сетью"
+        log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
         changed = true
       elseif stockTicker and (forceOrderId == order.id or current >= (tonumber(order.nextAttemptAt) or 0)) then
         order.lastAttemptAt = current
@@ -246,6 +262,7 @@ function orders.tick(forceOrderId)
           if orders.remaining(order) <= 0 then
             order.state = "accepted"
             order.lastResult = "Весь объём принят сетью"
+            log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
           else
             if accepted > 0 then order.emptyAttempts = 0 else order.emptyAttempts = (tonumber(order.emptyAttempts) or 0) + 1 end
             local delay = math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ^ math.max(0, (tonumber(order.emptyAttempts) or 0) - 1)))
@@ -257,12 +274,14 @@ function orders.tick(forceOrderId)
           local delay = math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ^ math.max(0, order.emptyAttempts - 1)))
           order.nextAttemptAt = current + delay
           order.lastResult = "Ошибка Stock Ticker: " .. tostring(result)
+          log("Ошибка отправки заявки №" .. tostring(order.id) .. ": " .. tostring(result))
         end
         changed = true
       elseif not stockTicker then
         if order.lastResult ~= "Stock Ticker не найден" then
           order.lastResult = "Stock Ticker не найден"
           order.nextAttemptAt = current + RETRY_BASE_MS
+          log("Заявка №" .. tostring(order.id) .. " ждёт Stock Ticker")
           changed = true
         end
       end

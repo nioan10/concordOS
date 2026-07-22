@@ -3353,6 +3353,98 @@ if not completed then
   showCrash(crash)
   os.pullEventRaw()
 end]====],
+  ["/concordos/apps/activity.lua"] = [====[-- Read-only industrial activity journal.
+local ROOT = "/concordos"
+local ui = dofile(ROOT .. "/system/lib/ui.lua")
+local activity = dofile(ROOT .. "/system/lib/activity.lua")
+local output = term.current()
+
+local filter, page = "all", 0
+local PAGE_SIZE = 11
+local filters = {
+  { id = "all", label = "Все" },
+  { id = "orders", label = "Заявки" },
+  { id = "recipes", label = "Рецепты" },
+  { id = "system", label = "Система" },
+}
+
+local function homeButton(width)
+  local size = width >= 40 and 11 or 3
+  return width - size + 1, size, size == 3 and "<" or "< Главная"
+end
+
+local function categoryLabel(category)
+  if category == "orders" then return "Заявки" end
+  if category == "recipes" then return "Рецепты" end
+  return "Система"
+end
+
+local function entries()
+  return activity.list(filter)
+end
+
+local function draw()
+  local width, height = output.getSize()
+  ui.clear(output, colors.gray)
+  ui.line(output, 1, 1, width, "ConcordOS | Журнал активности", colors.white, colors.blue)
+  local homeX, homeWidth, homeLabel = homeButton(width)
+  ui.button(output, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
+  ui.text(output, homeX, 1, homeLabel, colors.white, colors.lightBlue)
+
+  local tabWidth = math.floor((width - 2) / #filters)
+  for index, entry in ipairs(filters) do
+    local x = 2 + (index - 1) * tabWidth
+    local buttonWidth = index == #filters and width - x - 1 or tabWidth - 1
+    ui.button(output, x, 3, buttonWidth, 1, entry.label, colors.white, colors.blue, filter == entry.id)
+  end
+
+  local list = entries()
+  local pages = math.max(1, math.ceil(#list / PAGE_SIZE))
+  if page >= pages then page = pages - 1 end
+  ui.text(output, 2, 5, "Последние события; новые сверху.", colors.lightGray, colors.gray)
+  local first = page * PAGE_SIZE + 1
+  for row = 0, PAGE_SIZE - 1 do
+    local entry = list[first + row]
+    if entry then
+      local y = 6 + row
+      local line = activity.timeLabel(entry.at) .. " " .. categoryLabel(entry.category) .. " · " .. tostring(entry.text)
+      ui.line(output, 2, y, width - 3, line, colors.white, row % 2 == 0 and colors.black or colors.gray)
+    end
+  end
+  if #list == 0 then ui.text(output, 2, 7, "Пока нет событий этого типа.", colors.lightGray, colors.gray) end
+  ui.line(output, 1, height - 1, width, "В журнале: " .. tostring(activity.count()) .. "/250", colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, "Стр. " .. tostring(page + 1) .. "/" .. tostring(pages) .. "  Колесо: страницы  F5: обновить", colors.black, colors.lightGray)
+end
+
+draw()
+while true do
+  local event, a, b, c = os.pullEventRaw()
+  local width = output.getSize()
+  if event == "term_resize" then
+    draw()
+  elseif event == "key" then
+    if a == keys.escape or a == keys.q then return end
+    if a == keys.up then page = math.max(0, page - 1) end
+    if a == keys.down then page = page + 1 end
+    draw()
+  elseif event == "mouse_scroll" then
+    page = math.max(0, page + (a > 0 and 1 or -1))
+    draw()
+  elseif event == "mouse_click" or event == "monitor_touch" then
+    local x, y = b, c
+    local homeX, homeWidth = homeButton(width)
+    if y == 1 and x >= homeX and x < homeX + homeWidth then return end
+    if y == 3 then
+      local tabWidth = math.floor((width - 2) / #filters)
+      local index = math.floor((x - 2) / tabWidth) + 1
+      local selected = filters[index]
+      if selected then filter, page = selected.id, 0 end
+    end
+    draw()
+  elseif event == "terminate" then
+    return
+  end
+end]====],
   ["/concordos/apps/recipes.lua"] = [====[-- ConcordOS recipe registry: definitions first, execution comes later.
 local ROOT = "/concordos"
 local ui = dofile(ROOT .. "/system/lib/ui.lua")
@@ -4125,7 +4217,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.14.0",
+  version = "0.15.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4135,6 +4227,7 @@ end]====],
   },
   tools = {
     { id = "update", title = "Обновления", subtitle = "Проверить ConcordOS", path = "/update", color = colors.lightBlue },
+    { id = "activity", title = "Журнал активности", subtitle = "Заявки, рецепты и события ОС", path = "/concordos/apps/activity.lua", color = colors.lightBlue },
     { id = "plan", title = "План производства", subtitle = "Очередь и диспетчеризация", path = "/plan.lua", color = colors.green },
     { id = "checklist", title = "Чеклист материалов", subtitle = "Create Material Checklist", path = "/checklist.lua", color = colors.orange },
     { id = "inspect", title = "Инспектор Create", subtitle = "Периферии, методы и CC-интеграции", path = "/concordos/apps/inspect.lua", color = colors.purple },
@@ -4222,6 +4315,10 @@ if not fs.exists(ROOT .. "/system/desktop.lua") then
 end
 
 writeFile(MARKER, "booting " .. tostring(os.epoch and os.epoch("utc") or os.clock()))
+pcall(function()
+  local activity = dofile(ROOT .. "/system/lib/activity.lua")
+  activity.record("system", "ConcordOS запущена")
+end)
 local ok, result = xpcall(function()
   return parallel.waitForAny(
     function() return shell.run(ROOT .. "/system/desktop.lua") end,
@@ -4494,11 +4591,16 @@ local orders = {}
 
 local ROOT = "/concordos"
 local PATH = ROOT .. "/data/orders.db"
+local activity = dofile(ROOT .. "/system/lib/activity.lua")
 local RETRY_BASE_MS = 30000
 local RETRY_MAX_MS = 120000
 local function now()
   if os.epoch then return os.epoch("utc") end
   return math.floor(os.clock() * 1000)
+end
+
+local function log(text)
+  pcall(activity.record, "orders", text)
 end
 
 local function defaultData()
@@ -4564,6 +4666,7 @@ function orders.create(address, item, count)
   data.orders[#data.orders + 1] = order
   rememberAddress(data, order.address)
   orders.save(data)
+  log("Создана заявка №" .. tostring(order.id) .. ": " .. order.item .. " ×" .. tostring(order.requested) .. " → " .. order.address)
   return order
 end
 
@@ -4613,6 +4716,7 @@ function orders.createGroup(address, items, title)
   end
   rememberAddress(data, group.address)
   orders.save(data)
+  log("Создан заказ стройки №" .. tostring(group.id) .. " «" .. group.title .. "»: " .. tostring(#created) .. " поз. → " .. group.address)
   return group, created
 end
 
@@ -4651,6 +4755,7 @@ function orders.cancel(id)
       order.state = "cancelled"
       order.lastResult = "Отменено оператором"
       orders.save(data)
+      log("Отменена заявка №" .. tostring(order.id) .. ": " .. order.item)
       return true
     end
   end
@@ -4667,7 +4772,10 @@ function orders.cancelGroup(groupId)
       changed = true
     end
   end
-  if changed then orders.save(data) end
+  if changed then
+    orders.save(data)
+    log("Отменён заказ стройки №" .. tostring(groupId))
+  end
   return changed
 end
 
@@ -4678,6 +4786,7 @@ function orders.retry(id)
       order.nextAttemptAt = 0
       order.lastResult = "Повтор назначен оператором"
       orders.save(data)
+      log("Назначен повтор заявки №" .. tostring(order.id) .. ": " .. order.item)
       return true
     end
   end
@@ -4694,7 +4803,10 @@ function orders.retryGroup(groupId)
       changed = true
     end
   end
-  if changed then orders.save(data) end
+  if changed then
+    orders.save(data)
+    log("Назначен повтор заказа стройки №" .. tostring(groupId))
+  end
   return changed
 end
 
@@ -4722,6 +4834,7 @@ function orders.tick(forceOrderId)
       if remaining <= 0 then
         order.state = "accepted"
         order.lastResult = "Весь объём принят сетью"
+        log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
         changed = true
       elseif stockTicker and (forceOrderId == order.id or current >= (tonumber(order.nextAttemptAt) or 0)) then
         order.lastAttemptAt = current
@@ -4736,6 +4849,7 @@ function orders.tick(forceOrderId)
           if orders.remaining(order) <= 0 then
             order.state = "accepted"
             order.lastResult = "Весь объём принят сетью"
+            log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
           else
             if accepted > 0 then order.emptyAttempts = 0 else order.emptyAttempts = (tonumber(order.emptyAttempts) or 0) + 1 end
             local delay = math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ^ math.max(0, (tonumber(order.emptyAttempts) or 0) - 1)))
@@ -4747,12 +4861,14 @@ function orders.tick(forceOrderId)
           local delay = math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ^ math.max(0, order.emptyAttempts - 1)))
           order.nextAttemptAt = current + delay
           order.lastResult = "Ошибка Stock Ticker: " .. tostring(result)
+          log("Ошибка отправки заявки №" .. tostring(order.id) .. ": " .. tostring(result))
         end
         changed = true
       elseif not stockTicker then
         if order.lastResult ~= "Stock Ticker не найден" then
           order.lastResult = "Stock Ticker не найден"
           order.nextAttemptAt = current + RETRY_BASE_MS
+          log("Заявка №" .. tostring(order.id) .. " ждёт Stock Ticker")
           changed = true
         end
       end
@@ -4764,11 +4880,97 @@ function orders.tick(forceOrderId)
 end
 
 return orders]====],
+  ["/concordos/system/lib/activity.lua"] = [====[-- Persistent, compact activity history for ConcordOS.
+local activity = {}
+
+local ROOT = "/concordos"
+local PATH = ROOT .. "/data/activity.db"
+local MAX_ENTRIES = 250
+
+local function now()
+  if os.epoch then return os.epoch("utc") end
+  return math.floor(os.clock() * 1000)
+end
+
+local function defaultData()
+  return { version = 1, nextId = 1, entries = {} }
+end
+
+function activity.load()
+  if not fs.exists(PATH) then return defaultData() end
+  local file = fs.open(PATH, "r")
+  if not file then return defaultData() end
+  local raw = file.readAll()
+  file.close()
+  local data = textutils.unserialize(raw)
+  if type(data) ~= "table" or type(data.entries) ~= "table" then return defaultData() end
+  data.version = 1
+  data.nextId = math.max(1, math.floor(tonumber(data.nextId) or 1))
+  return data
+end
+
+local function save(data)
+  local directory = fs.getDir(PATH)
+  if not fs.exists(directory) then fs.makeDir(directory) end
+  local file = fs.open(PATH, "w")
+  if not file then return false end
+  file.write(textutils.serialize(data))
+  file.close()
+  return true
+end
+
+-- Logging must never be able to stop orders or other industrial logic.
+function activity.record(category, text)
+  local ok, result = pcall(function()
+    local data = activity.load()
+    local entry = {
+      id = data.nextId,
+      at = now(),
+      category = tostring(category or "system"),
+      text = tostring(text or ""):gsub("[\r\n]+", " "),
+    }
+    data.nextId = entry.id + 1
+    data.entries[#data.entries + 1] = entry
+    while #data.entries > MAX_ENTRIES do table.remove(data.entries, 1) end
+    return save(data)
+  end)
+  return ok and result or false
+end
+
+function activity.list(category)
+  local result = {}
+  local data = activity.load()
+  for index = #data.entries, 1, -1 do
+    local entry = data.entries[index]
+    if category == nil or category == "all" or entry.category == category then
+      result[#result + 1] = entry
+    end
+  end
+  return result
+end
+
+function activity.count()
+  return #activity.load().entries
+end
+
+function activity.timeLabel(timestamp)
+  local seconds = math.floor((tonumber(timestamp) or 0) / 1000)
+  local ok, label = pcall(os.date, "%d.%m %H:%M", seconds)
+  if ok and type(label) == "string" then return label end
+  return "время ?"
+end
+
+return activity]====],
   ["/concordos/system/lib/recipes.lua"] = [====[-- Persistent recipe registry and a side-effect-free production planner.
 local recipes = {}
 
 local ROOT = "/concordos"
 local PATH = ROOT .. "/data/recipes.db"
+local activity = dofile(ROOT .. "/system/lib/activity.lua")
+
+local function log(text)
+  pcall(activity.record, "recipes", text)
+end
 
 local function defaultData()
   return { version = 1, nextId = 1, recipes = {} }
@@ -4888,6 +5090,7 @@ function recipes.upsert(input)
   end
   table.sort(data.recipes, function(a, b) return a.name:lower() < b.name:lower() end)
   recipes.save(data)
+  log((slot and "Изменён рецепт «" or "Создан рецепт «") .. clean.name .. "» → " .. clean.output)
   return clean
 end
 
@@ -4897,6 +5100,7 @@ function recipes.remove(id)
     if recipe.id == tonumber(id) then
       table.remove(data.recipes, index)
       recipes.save(data)
+      log("Удалён рецепт «" .. recipe.name .. "»")
       return true
     end
   end
@@ -4938,6 +5142,9 @@ function recipes.setTag(ids, tag, enabled)
     end
   end
   if changed > 0 then recipes.save(data) end
+  if changed > 0 then
+    log((enabled and "Добавлен тег «" or "Снят тег «") .. tag .. "» у " .. tostring(changed) .. " рецепт(ов)")
+  end
   return changed > 0, changed
 end
 

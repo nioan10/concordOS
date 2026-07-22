@@ -3,6 +3,11 @@ local recipes = {}
 
 local ROOT = "/concordos"
 local PATH = ROOT .. "/data/recipes.db"
+local activity = dofile(ROOT .. "/system/lib/activity.lua")
+
+local function log(text)
+  pcall(activity.record, "recipes", text)
+end
 
 local function defaultData()
   return { version = 1, nextId = 1, recipes = {} }
@@ -122,6 +127,7 @@ function recipes.upsert(input)
   end
   table.sort(data.recipes, function(a, b) return a.name:lower() < b.name:lower() end)
   recipes.save(data)
+  log((slot and "Изменён рецепт «" or "Создан рецепт «") .. clean.name .. "» → " .. clean.output)
   return clean
 end
 
@@ -131,6 +137,7 @@ function recipes.remove(id)
     if recipe.id == tonumber(id) then
       table.remove(data.recipes, index)
       recipes.save(data)
+      log("Удалён рецепт «" .. recipe.name .. "»")
       return true
     end
   end
@@ -172,6 +179,9 @@ function recipes.setTag(ids, tag, enabled)
     end
   end
   if changed > 0 then recipes.save(data) end
+  if changed > 0 then
+    log((enabled and "Добавлен тег «" or "Снят тег «") .. tag .. "» у " .. tostring(changed) .. " рецепт(ов)")
+  end
   return changed > 0, changed
 end
 

@@ -73,6 +73,10 @@ if not fs.exists(ROOT .. "/system/desktop.lua") then
 end
 
 writeFile(MARKER, "booting " .. tostring(os.epoch and os.epoch("utc") or os.clock()))
+pcall(function()
+  local activity = dofile(ROOT .. "/system/lib/activity.lua")
+  activity.record("system", "ConcordOS запущена")
+end)
 local ok, result = xpcall(function()
   return parallel.waitForAny(
     function() return shell.run(ROOT .. "/system/desktop.lua") end,

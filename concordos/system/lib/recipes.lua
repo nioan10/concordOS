@@ -21,6 +21,19 @@ local function normaliseIngredient(entry)
   return { item = item, count = count }
 end
 
+local function normaliseTags(values)
+  local tags, seen = {}, {}
+  for _, value in ipairs(type(values) == "table" and values or {}) do
+    local tag = tostring(value or ""):match("^%s*(.-)%s*$")
+    if tag ~= "" and not seen[tag] then
+      seen[tag] = true
+      tags[#tags + 1] = tag
+    end
+  end
+  table.sort(tags)
+  return tags
+end
+
 local function normaliseRecipe(recipe, fallbackId)
   if type(recipe) ~= "table" then return nil end
   local output = tostring(recipe.output or recipe.item or "")
@@ -38,6 +51,7 @@ local function normaliseRecipe(recipe, fallbackId)
     line = tostring(recipe.line or ""),
     duration = math.max(0, number(recipe.duration, 0)),
     ingredients = ingredients,
+    tags = normaliseTags(recipe.tags),
   }
 end
 
@@ -121,6 +135,44 @@ function recipes.remove(id)
     end
   end
   return false
+end
+
+function recipes.allTags()
+  local seen, result = {}, {}
+  for _, recipe in ipairs(recipes.list()) do
+    for _, tag in ipairs(recipe.tags or {}) do
+      if not seen[tag] then seen[tag] = true result[#result + 1] = tag end
+    end
+  end
+  table.sort(result)
+  return result
+end
+
+-- Add or remove one tag on several recipes at once. Existing data is retained.
+function recipes.setTag(ids, tag, enabled)
+  tag = tostring(tag or ""):match("^%s*(.-)%s*$")
+  if tag == "" then return false, "Введи тег" end
+  local wanted = {}
+  for _, id in ipairs(ids or {}) do wanted[tonumber(id)] = true end
+  if not next(wanted) then return false, "Не выбраны рецепты" end
+  local data, changed = recipes.load(), 0
+  for _, recipe in ipairs(data.recipes) do
+    if wanted[recipe.id] then
+      local tags, found = normaliseTags(recipe.tags), false
+      for index, existing in ipairs(tags) do
+        if existing == tag then
+          found = true
+          if not enabled then table.remove(tags, index) end
+          break
+        end
+      end
+      if enabled and not found then tags[#tags + 1] = tag end
+      recipe.tags = normaliseTags(tags)
+      changed = changed + 1
+    end
+  end
+  if changed > 0 then recipes.save(data) end
+  return changed > 0, changed
 end
 
 -- Produces a tree and a consolidated materials list. Stocks is optional and

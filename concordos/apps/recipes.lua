@@ -10,13 +10,17 @@ local selected, page = 1, 0
 local activeField = nil
 local fields = { name = "", output = "", outputCount = "1", line = "", ingredients = "", duration = "" }
 local editingId = nil
+local editingTags = {}
 local plan, status, statusColor = nil, "Реестр пуст — добавь первую технологию.", colors.lightGray
 local picker = { target = nil, search = "", items = {}, page = 0, selected = 1 }
 local components, componentPage = {}, 0
 local componentPrompt = nil
 local knownRecipeOutputs = {}
--- Five rows deliberately fit a normal 51×19 computer without covering footer.
-local PAGE_SIZE = 5
+local recipeSearch, searchActive = "", false
+local tagSelectMode, tagSelected = false, {}
+local tagInput, tagTargets, tagReturnScreen = "", {}, "list"
+-- Dense catalog layout deliberately fits a normal 51×19 computer.
+local PAGE_SIZE = 10
 local shiftHeld, metaHeld = false, false
 local russianInput = true
 
@@ -98,8 +102,53 @@ local function homeButton(width)
   return width - size + 1, size, size == 3 and "<" or "< Главная"
 end
 
+local function trim(value)
+  return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
 local function setStatus(text, color)
   status, statusColor = tostring(text or ""), color or colors.lightGray
+end
+
+local function recipeTags(recipe)
+  return table.concat(recipe.tags or {}, ", ")
+end
+
+local function filteredRecipes()
+  local query = ru.lower(trim(recipeSearch))
+  local result = {}
+  for _, recipe in ipairs(registry.list()) do
+    local searchable = recipe.name .. " " .. recipe.output .. " " .. recipeTags(recipe)
+    if query == "" or ru.lower(searchable):find(query, 1, true) then result[#result + 1] = recipe end
+  end
+  return result
+end
+
+local function selectedTagIds()
+  local ids = {}
+  for id, enabled in pairs(tagSelected) do if enabled then ids[#ids + 1] = id end end
+  table.sort(ids)
+  return ids
+end
+
+local function openTags(ids, returnScreen)
+  if #ids == 0 then setStatus("Сначала отметь хотя бы один рецепт", colors.orange) return false end
+  tagTargets, tagInput, tagReturnScreen = ids, "", returnScreen or "list"
+  screen, searchActive = "tags", false
+  return true
+end
+
+local function applyTag(enabled)
+  local ok, result = registry.setTag(tagTargets, tagInput, enabled)
+  if ok then
+    setStatus((enabled and "Тег добавлен: " or "Тег снят: ") .. trim(tagInput) .. " (" .. tostring(result) .. ")", enabled and colors.lime or colors.orange)
+  else
+    setStatus(tostring(result), colors.red)
+  end
+  if tagReturnScreen == "edit" and editingId then
+    local recipe = registry.get(editingId)
+    editingTags = recipe and recipe.tags or editingTags
+  end
 end
 
 local function itemName(entry, fallback)
@@ -176,10 +225,6 @@ local function choosePickerItem(item)
   setStatus("Подставлен ID: " .. item.name, colors.lime)
 end
 
-local function trim(value)
-  return tostring(value or ""):match("^%s*(.-)%s*$")
-end
-
 local function parseIngredients(value)
   local items, errors = {}, {}
   for chunk in (tostring(value or "") .. ";"):gmatch("(.-);") do
@@ -246,6 +291,7 @@ local function resetForm(recipe)
   fields.line = recipe and recipe.line or ""
   fields.ingredients = recipe and formatIngredients(recipe.ingredients) or ""
   fields.duration = recipe and (recipe.duration > 0 and tostring(recipe.duration) or "") or ""
+  editingTags = recipe and recipe.tags or {}
   activeField = "name"
 end
 
@@ -263,7 +309,7 @@ local function saveRecipe()
   end
   local recipe, err = registry.upsert({
     id = editingId, name = trim(fields.name), output = trim(fields.output), outputCount = outputCount,
-    line = trim(fields.line), duration = tonumber(fields.duration) or 0, ingredients = ingredients,
+    line = trim(fields.line), duration = tonumber(fields.duration) or 0, ingredients = ingredients, tags = editingTags,
   })
   if not recipe then setStatus(err, colors.red) return false end
   setStatus("Рецепт «" .. recipe.name .. "» сохранён", colors.lime)
@@ -310,29 +356,53 @@ end
 
 local function drawList(width, height)
   header(width, "Реестр рецептов")
-  local recipes = registry.list()
-  ui.text(output, 2, 3, "Технологии для будущего автокрафта. P — расчёт, N — новый рецепт.", colors.lightGray, colors.gray)
-  ui.button(output, 2, 4, 12, 1, "+ Новый", colors.white, colors.green, false)
-  ui.button(output, 15, 4, 14, 1, "Обновить", colors.white, colors.blue, false)
+  local recipes = filteredRecipes()
+  ui.text(output, 2, 3, "Поиск: название, ID результата или тег", colors.lightGray, colors.gray)
+  ui.line(output, 2, 4, width - 3, ru.fit(recipeSearch .. (searchActive and "|" or ""), width - 3, ""), colors.white, searchActive and colors.blue or colors.black)
+  ui.button(output, 2, 5, 11, 1, "+ Новый", colors.white, colors.green, false)
+  ui.button(output, 14, 5, 13, 1, tagSelectMode and "Отмена выбора" or "Отметить", colors.white, colors.blue, tagSelectMode)
+  local selectedTags = #selectedTagIds()
+  ui.button(output, 28, 5, width - 29, 1, "Теги: " .. tostring(selectedTags), colors.white, colors.purple, selectedTags > 0)
   if #recipes == 0 then
-    ui.text(output, 2, 7, "Пока нет рецептов. Начни, например, с рельс.", colors.white, colors.gray)
+    ui.text(output, 2, 8, recipeSearch == "" and "Пока нет рецептов. Начни, например, с рельс." or "Поиск ничего не нашёл.", colors.white, colors.gray)
   else
     local first = page * PAGE_SIZE + 1
     for row = 0, PAGE_SIZE - 1 do
       local recipe = recipes[first + row]
       if recipe then
-        local y = 6 + row * 2
+        local y = 7 + row
         local current = first + row == selected
-        ui.line(output, 2, y, width - 3, ru.fit(recipe.name, width - 4, ""), colors.white, current and colors.blue or colors.black)
-        local details = recipe.output .. " ×" .. tostring(recipe.outputCount)
-        if recipe.line ~= "" then details = details .. "  |  " .. recipe.line end
-        ui.text(output, 3, y + 1, ru.fit(details, width - 5, ""), colors.lightGray, colors.gray)
+        local mark = tagSelectMode and (tagSelected[recipe.id] and "[x] " or "[ ] ") or ""
+        local tags = recipeTags(recipe)
+        local text = mark .. recipe.name .. " | " .. recipe.output
+        if tags ~= "" then text = text .. " #" .. tags:gsub(", ", " #") end
+        ui.line(output, 2, y, width - 3, ru.fit(text, width - 3, ""), colors.white, current and colors.blue or colors.black)
       end
     end
   end
   local pages = math.max(1, math.ceil(#recipes / PAGE_SIZE))
   ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
-  ui.line(output, 1, height, width, "Стр. " .. tostring(page + 1) .. "/" .. tostring(pages) .. "  Колесо: список  Enter: править  P: план", colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, "Стр. " .. tostring(page + 1) .. "/" .. tostring(pages) .. "  Колесо: список  Enter: открыть  P: план", colors.black, colors.lightGray)
+end
+
+local function drawTags(width, height)
+  header(width, "Настройка тегов")
+  ui.text(output, 2, 3, "Рецептов выбрано: " .. tostring(#tagTargets) .. ". Введи или выбери тег:", colors.lightGray, colors.gray)
+  ui.line(output, 2, 4, width - 3, ru.fit(tagInput .. "|", width - 3, ""), colors.white, colors.blue)
+  ui.button(output, 2, 6, 13, 1, "+ Добавить", colors.white, colors.green, false)
+  ui.button(output, 16, 6, 11, 1, "- Снять", colors.white, colors.red, false)
+  ui.button(output, 28, 6, width - 29, 1, "Готово", colors.white, colors.gray, false)
+  local tags = registry.allTags()
+  if #tags == 0 then
+    ui.text(output, 2, 8, "Общих тегов пока нет. Напиши первый выше.", colors.lightGray, colors.gray)
+  else
+    ui.text(output, 2, 8, "Известные теги — клик подставляет:", colors.lightGray, colors.gray)
+    for index = 1, math.min(#tags, math.max(1, height - 10)) do
+      ui.line(output, 2, 8 + index, width - 3, ru.fit(tags[index], width - 3, ""), colors.white, index % 2 == 0 and colors.gray or colors.black)
+    end
+  end
+  ui.line(output, 1, height - 1, width, ru.fit(status, width, ""), statusColor, colors.gray)
+  ui.line(output, 1, height, width, "Enter: добавить  F7/Win+Space: " .. inputLayoutName() .. "  ← Главная: выход", colors.black, colors.lightGray)
 end
 
 local fieldsOrder = { "name", "output", "outputCount", "line", "ingredients", "duration" }
@@ -421,6 +491,8 @@ local function drawEdit(width, height)
   input(width, 9, "line")
   input(width, 11, "ingredients")
   if height >= 21 then input(width, 13, "duration") end
+  local tagY = height >= 21 and 16 or 14
+  ui.button(output, 2, tagY, 16, 1, editingId and ("Теги: " .. tostring(#editingTags)) or "Теги после сохр.", colors.white, colors.purple, editingId ~= nil)
   local y = height - 3
   ui.button(output, 2, y, 12, 1, "Сохранить", colors.white, colors.green, false)
   ui.button(output, 15, y, 12, 1, "Отмена", colors.white, colors.gray, false)
@@ -462,6 +534,7 @@ end
 local function draw()
   local width, height = output.getSize()
   if screen == "list" then drawList(width, height)
+  elseif screen == "tags" then drawTags(width, height)
   elseif screen == "edit" then drawEdit(width, height)
   elseif screen == "stock" then drawStockPicker(width, height)
   elseif screen == "components" then drawComponents(width, height)
@@ -470,14 +543,14 @@ local function draw()
 end
 
 local function chooseRecipe(delta)
-  local count = #registry.list()
+  local count = #filteredRecipes()
   if count == 0 then selected = 1 return end
   selected = math.max(1, math.min(count, selected + delta))
   page = math.floor((selected - 1) / PAGE_SIZE)
 end
 
 local function openSelected()
-  local recipe = registry.list()[selected]
+  local recipe = filteredRecipes()[selected]
   if recipe then resetForm(recipe) screen = "edit" end
 end
 
@@ -505,6 +578,12 @@ while true do
     draw()
   elseif event == "paste" then
     if screen == "edit" and activeField then fields[activeField] = fields[activeField] .. a draw() end
+    if screen == "list" and searchActive then
+      recipeSearch = recipeSearch .. a
+      page, selected = 0, 1
+      draw()
+    end
+    if screen == "tags" then tagInput = tagInput .. a draw() end
     if screen == "stock" then
       picker.search = picker.search .. a
       picker.page, picker.selected = 0, 1
@@ -516,12 +595,36 @@ while true do
     end
   elseif event == "key" then
     if screen == "list" then
-      if a == keys.enter then openSelected()
+      local character = inputChar(a)
+      if searchActive then
+        if isLayoutToggle(a) then russianInput = not russianInput
+        elseif character then
+          recipeSearch = recipeSearch .. character
+          page, selected = 0, 1
+        elseif a == keys.backspace then
+          recipeSearch = ru.sub(recipeSearch, 1, ru.len(recipeSearch) - 1)
+          page, selected = 0, 1
+        elseif a == keys.enter then searchActive = false
+        elseif a == keys.escape then searchActive = false
+        end
+      elseif a == keys.enter then
+        local recipe = filteredRecipes()[selected]
+        if recipe and tagSelectMode then tagSelected[recipe.id] = not tagSelected[recipe.id] else openSelected() end
       elseif a == keys.n then resetForm() screen = "edit"
-      elseif a == keys.p then local recipe = registry.list()[selected] if recipe then makePlan(recipe) end
+      elseif a == keys.p then local recipe = filteredRecipes()[selected] if recipe then makePlan(recipe) end
+      elseif a == keys.t then tagSelectMode = not tagSelectMode if not tagSelectMode then tagSelected = {} end
+      elseif a == keys.g then openTags(selectedTagIds(), "list")
       elseif a == keys.up then chooseRecipe(-1)
       elseif a == keys.down then chooseRecipe(1)
       elseif a == keys.escape or a == keys.q then return end
+    elseif screen == "tags" then
+      local character = inputChar(a)
+      if isLayoutToggle(a) then russianInput = not russianInput
+      elseif character then tagInput = tagInput .. character
+      elseif a == keys.backspace then tagInput = ru.sub(tagInput, 1, ru.len(tagInput) - 1)
+      elseif a == keys.enter then applyTag(true)
+      elseif a == keys.escape then screen, searchActive = tagReturnScreen, false
+      end
     elseif screen == "edit" then
       local character = inputChar(a)
       if isLayoutToggle(a) then russianInput = not russianInput
@@ -534,6 +637,7 @@ while true do
       elseif a == keys.f2 then saveRecipe()
       elseif a == keys.f3 then
         if saveRecipe() then makePlan(registry.get(editingId) or registry.findOutput(fields.output)) end
+      elseif a == keys.f4 and editingId then openTags({ editingId }, "edit")
       elseif a == keys.escape then screen, activeField = "list", nil
       end
     elseif screen == "stock" then
@@ -569,9 +673,9 @@ while true do
     draw()
   elseif event == "mouse_scroll" and (screen == "list" or screen == "stock" or screen == "components") then
     if screen == "list" then
-      local total = math.max(0, math.ceil(#registry.list() / PAGE_SIZE) - 1)
+      local total = math.max(0, math.ceil(#filteredRecipes() / PAGE_SIZE) - 1)
       page = math.max(0, math.min(total, page + (a > 0 and 1 or -1)))
-      selected = math.min(math.max(1, #registry.list()), page * PAGE_SIZE + 1)
+      selected = math.min(math.max(1, #filteredRecipes()), page * PAGE_SIZE + 1)
     elseif screen == "stock" then
       local pageSize = math.max(1, math.min(7, height - 8))
       local total = math.max(0, math.ceil(#pickerResults() / pageSize) - 1)
@@ -588,11 +692,30 @@ while true do
     local homeX, homeWidth = homeButton(width)
     if y == 1 and x >= homeX and x < homeX + homeWidth then return end
     if screen == "list" then
-      if y == 4 and x < 14 then resetForm() screen = "edit"
-      elseif y == 4 then setStatus("Список перечитан", colors.lime)
-      elseif y >= 6 and y < 6 + PAGE_SIZE * 2 then
-        local index = page * PAGE_SIZE + math.floor((y - 6) / 2) + 1
-        if registry.list()[index] then selected = index openSelected() end
+      if y == 4 then
+        searchActive = true
+      elseif y == 5 and x < 13 then
+        resetForm() screen = "edit"
+      elseif y == 5 and x < 27 then
+        tagSelectMode = not tagSelectMode
+        if not tagSelectMode then tagSelected = {} end
+      elseif y == 5 then
+        openTags(selectedTagIds(), "list")
+      elseif y >= 7 and y < 7 + PAGE_SIZE then
+        local index = page * PAGE_SIZE + y - 6
+        local recipe = filteredRecipes()[index]
+        if recipe then
+          selected = index
+          if tagSelectMode then tagSelected[recipe.id] = not tagSelected[recipe.id] else openSelected() end
+        end
+      end
+    elseif screen == "tags" then
+      if y == 6 and x < 15 then applyTag(true)
+      elseif y == 6 and x < 27 then applyTag(false)
+      elseif y == 6 then screen, searchActive = tagReturnScreen, false
+      elseif y >= 9 then
+        local tag = registry.allTags()[y - 8]
+        if tag then tagInput = tag end
       end
     elseif screen == "edit" then
       local key = fieldAt(y, height)
@@ -600,6 +723,8 @@ while true do
         loadPicker(key)
       elseif key == "ingredients" and x >= width - 20 then
         openComponents()
+      elseif y == (height >= 21 and 16 or 14) and editingId then
+        openTags({ editingId }, "edit")
       elseif key then activeField = key
       elseif y == height - 3 then
         if x < 14 then saveRecipe()

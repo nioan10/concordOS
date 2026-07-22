@@ -4256,7 +4256,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.15.1",
+  version = "0.15.2",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -5241,8 +5241,11 @@ local utf = utf8
 local replacements = {
   [0x2116] = "No", -- №
   [0x00AB] = '"', [0x00BB] = '"',
+  [0x00B7] = ".", -- ·
+  [0x00D7] = "x", -- ×
   [0x2013] = "-", [0x2014] = "-", [0x2212] = "-",
   [0x2026] = "...",
+  [0x2190] = "<", [0x2192] = ">", -- arrows
   [0x00A0] = " ",
 }
 

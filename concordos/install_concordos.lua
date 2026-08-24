@@ -4387,7 +4387,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.17.0",
+  version = "0.18.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4545,48 +4545,73 @@ local function appList()
   if selected > #visible then selected = math.max(1, #visible) end
 end
 
+local SIDEBAR_WIDTH = 12
+
+local function usesDashboard(output)
+  local width, height = output.getSize()
+  return width >= 40 and height >= 15
+end
+
 local function appGeometry(output)
   local width, height = output.getSize()
+  local dashboard = usesDashboard(output)
   local ultraCompact = height < 9
-  local compact = height < 14
+  local compact = height < 14 or width < 32
+  if dashboard then
+    local contentWidth = width - SIDEBAR_WIDTH - 2
+    local tileWidth = math.floor((contentWidth - 1) / 2)
+    local featured = section == 'main' and visible[1] and visible[1].featured
+    local firstY = featured and 8 or 4
+    local rows = featured and 3 or 4
+    local capacity = featured and (1 + rows * 2) or rows * 2
+    return width, height, tileWidth, rows, capacity, firstY, 3, 2, false, false, 2
+  end
+
   local columns = (ultraCompact or width < 32) and 1 or 2
   local tileWidth = columns == 1 and width - 2 or math.floor((width - 3) / 2)
   local firstY = ultraCompact and 2 or (compact and 3 or 4)
-  local tileHeight = ultraCompact and 1 or (compact and 1 or 2)
-  local step = tileHeight + 1
-  local lastContentY = math.max(firstY, height - 2)
+  local tileHeight = (ultraCompact or compact) and 1 or 2
+  local step = (ultraCompact or compact) and 1 or 3
+  local lastContentY = math.max(firstY, height - 1)
   local rows = math.max(1, math.floor((lastContentY - firstY + 1) / step))
-  local featured = not compact and not ultraCompact and section == 'main' and visible[1] and visible[1].featured
+  local featured = not ultraCompact and section == 'main' and visible[1] and visible[1].featured
   local capacity = featured and (1 + math.max(0, rows - 1) * columns) or rows * columns
   return width, height, tileWidth, rows, capacity, firstY, step, tileHeight, compact, ultraCompact, columns
 end
 
 local function appPosition(output, slot)
   local width, _, tileWidth, _, _, firstY, step, tileHeight, _, ultraCompact, columns = appGeometry(output)
-  local featured = not ultraCompact and section == 'main' and visible[1] and visible[1].featured
-  if featured and slot == 0 then return 2, firstY, width - 2, tileHeight end
+  local dashboard = usesDashboard(output)
+  local featured = section == 'main' and visible[1] and visible[1].featured
+  if dashboard then
+    local contentX, contentWidth = SIDEBAR_WIDTH + 2, width - SIDEBAR_WIDTH - 2
+    if featured and slot == 0 then return contentX, 4, contentWidth, 2 end
+    local relative = featured and slot - 1 or slot
+    return contentX + (relative % 2) * (tileWidth + 1), firstY + math.floor(relative / 2) * step, tileWidth, tileHeight
+  end
+  if featured and not ultraCompact and slot == 0 then return 2, firstY, width - 2, tileHeight end
 
   local relative = featured and slot - 1 or slot
   local column = relative % columns
   local row = math.floor(relative / columns)
-  local y = featured and firstY + step + row * step or firstY + row * step
-  return 2 + column * (tileWidth + 1), y, tileWidth, tileHeight
+  return 2 + column * (tileWidth + 1), firstY + row * step, tileWidth, tileHeight
 end
 
 local function drawAppCard(output, x, y, width, height, app, active)
-  local background = active and colors.blue or colors.black
-  local accent = app.color == colors.black and colors.lightGray or app.color
+  local background = active and colors.gray or colors.black
+  local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
-  ui.fill(output, x, y, 1, height, active and colors.lightBlue or accent)
+  ui.fill(output, x, y, 1, height, accent)
   ui.text(output, x + 2, y, ru.fit(app.title, width - 3), colors.white, background)
   if height > 1 then
     ui.text(output, x + 2, y + 1, ru.fit(app.subtitle, width - 3), colors.lightGray, background)
   end
 end
+
 local function backButton(output)
   local width = output.getSize()
   local buttonWidth = width >= 28 and 11 or 3
-  return width - buttonWidth + 1, 1, buttonWidth, buttonWidth == 3 and "<" or "< Главная"
+  return width - buttonWidth + 1, 1, buttonWidth, buttonWidth == 3 and '<' or '< Главная'
 end
 
 local function pageCapacity()
@@ -4598,50 +4623,101 @@ local function pageCapacity()
   return capacity or 1
 end
 
-local function drawOutput(output, isMonitor, perPage)
-  local width, height, _, _, _, firstY, _, _, compact, ultraCompact = appGeometry(output)
+local function sectionTitle()
+  return section == 'tools' and 'Инструменты' or (section == 'games' and 'Игры' or 'Главный пульт')
+end
+
+local function sidebarSectionAt(x, y)
+  if x > SIDEBAR_WIDTH then return nil end
+  if y == 4 then return 'main' end
+  if y == 6 then return 'tools' end
+  if y == 8 then return 'games' end
+end
+
+local function drawSidebar(output, height)
+  ui.fill(output, 1, 2, SIDEBAR_WIDTH, height - 2, colors.black)
+  ui.line(output, 2, 2, SIDEBAR_WIDTH - 2, 'РАЗДЕЛЫ', colors.lightGray, colors.black)
+  local entries = {
+    { id = 'main', label = 'Пульт', y = 4 },
+    { id = 'tools', label = 'Сервисы', y = 6 },
+    { id = 'games', label = 'Игры', y = 8 },
+  }
+  for _, entry in ipairs(entries) do
+    local active = section == entry.id
+    local background = active and colors.blue or colors.black
+    ui.line(output, 2, entry.y, SIDEBAR_WIDTH - 2, (active and '> ' or '  ') .. entry.label, colors.white, background)
+  end
+  ui.line(output, 2, 10, SIDEBAR_WIDTH - 2, string.rep('-', SIDEBAR_WIDTH - 2), colors.darkGray, colors.black)
+  ui.text(output, 2, 12, 'v' .. config.version, colors.lightGray, colors.black)
+  ui.text(output, 2, height - 2, 'R: reboot', colors.lightGray, colors.black)
+end
+
+local function drawDashboard(output, isMonitor, perPage)
+  local width, height = output.getSize()
+  local contentX, contentWidth = SIDEBAR_WIDTH + 2, width - SIDEBAR_WIDTH - 2
   local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
-  local sectionTitle = section == 'tools' and 'Инструменты' or (section == 'games' and 'Игры' or 'Главный пульт')
-  local sectionSubtitle = section == 'tools' and 'Служебные программы и диагностика'
-    or (section == 'games' and 'Небольшие игры для отдыха' or 'Заказы, производство и управление сетью')
-
   ui.clear(output, colors.gray)
-  local topTitle = config.name .. ' / ' .. (section == 'main' and config.country or sectionTitle)
-  ui.line(output, 1, 1, width, topTitle, colors.white, colors.blue)
-  if section ~= 'main' then
-    local x, y, buttonWidth, label = backButton(output)
-    ui.fill(output, x, y, buttonWidth, 1, colors.blue)
-    ui.text(output, x, y, label, colors.white, colors.blue)
-  end
-  if not ultraCompact then
-    ui.line(output, 1, 2, width, sectionTitle .. '  |  v' .. config.version, colors.lightGray, colors.black)
-  end
-  if not compact and not ultraCompact then
-    ui.line(output, 1, 3, width, '  ' .. ru.fit(sectionSubtitle, width - 2), colors.lightGray, colors.gray)
-  end
+  ui.line(output, 1, 1, width, config.name .. ' / ' .. config.country, colors.white, colors.blue)
+  drawSidebar(output, height)
+  ui.text(output, contentX, 2, sectionTitle(), colors.white, colors.gray)
+  ui.text(output, contentX, 3, ru.fit('Программ: ' .. tostring(#visible), contentWidth, ''), colors.lightGray, colors.gray)
 
-  if #visible == 0 then
-    ui.text(output, 2, firstY, 'Приложения пока не найдены.', colors.white, colors.gray)
+  if section == 'main' then
+    ui.line(output, contentX, 7, contentWidth, 'ОСНОВНЫЕ ПРОГРАММЫ', colors.lightGray, colors.gray)
+  else
+    ui.line(output, contentX, 3, contentWidth, ru.fit('Программ: ' .. tostring(#visible) .. '  |  v' .. config.version, contentWidth, ''), colors.lightGray, colors.gray)
   end
+  if #visible == 0 then ui.text(output, contentX, 5, 'Приложения пока не найдены.', colors.white, colors.gray) end
 
   local start = page * perPage + 1
   for slot = 0, perPage - 1 do
     local index = start + slot
     local app = visible[index]
     if app then
-      local x, y, buttonWidth, buttonHeight = appPosition(output, slot)
-      drawAppCard(output, x, y, buttonWidth, buttonHeight, app, index == selected)
+      local x, y, cardWidth, cardHeight = appPosition(output, slot)
+      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected)
     end
   end
 
   local controls
-  if section ~= 'main' then
-    controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
+  if section == 'main' then
+    controls = isMonitor and 'Клик: открыть' or 'Колесо: листать  Enter: открыть  Q: терминал'
   else
-    controls = isMonitor and 'Клик: открыть  Enter: открыть  Q: терминал' or 'Колесо: листать  Enter: открыть  Q: терминал'
+    controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
   end
-  local footer = 'Стр. ' .. tostring(page + 1) .. '/' .. tostring(maxPage + 1) .. '  ' .. controls
-  ui.line(output, 1, height, width, footer, colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, 'Стр. ' .. tostring(page + 1) .. '/' .. tostring(maxPage + 1) .. '  ' .. controls, colors.black, colors.lightGray)
+end
+
+local function drawOutput(output, isMonitor, perPage)
+  if usesDashboard(output) then
+    drawDashboard(output, isMonitor, perPage)
+    return
+  end
+
+  local width, height, _, _, _, firstY, _, _, compact, ultraCompact = appGeometry(output)
+  local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
+  ui.clear(output, colors.gray)
+  ui.line(output, 1, 1, width, config.name .. ' / ' .. sectionTitle(), colors.white, colors.blue)
+  if section ~= 'main' then
+    local x, y, buttonWidth, label = backButton(output)
+    ui.fill(output, x, y, buttonWidth, 1, colors.blue)
+    ui.text(output, x, y, label, colors.white, colors.blue)
+  end
+  if not ultraCompact then ui.line(output, 1, 2, width, sectionTitle() .. '  |  v' .. config.version, colors.lightGray, colors.black) end
+  if not compact and not ultraCompact then ui.line(output, 1, 3, width, 'Компактный режим', colors.lightGray, colors.gray) end
+  if #visible == 0 then ui.text(output, 2, firstY, 'Приложения пока не найдены.', colors.white, colors.gray) end
+
+  local start = page * perPage + 1
+  for slot = 0, perPage - 1 do
+    local index = start + slot
+    local app = visible[index]
+    if app then
+      local x, y, cardWidth, cardHeight = appPosition(output, slot)
+      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected)
+    end
+  end
+  local controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
+  ui.line(output, 1, height, width, 'Стр. ' .. tostring(page + 1) .. '/' .. tostring(maxPage + 1) .. '  ' .. controls, colors.black, colors.lightGray)
 end
 local function draw()
   appList()
@@ -4703,11 +4779,17 @@ while true do
     draw()
   elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
     local target = event == "monitor_touch" and monitor or computer
-    local _, _, tileWidth, rows = appGeometry(target)
     local perPage = pageCapacity()
     local mouseX, mouseY = b, c
     local backX, backY, backWidth = backButton(target)
-    if section ~= "main" and ui.inside(mouseX, mouseY, backX, backY, backWidth, 1) then
+    local dashboard = usesDashboard(target)
+    local nextSection = dashboard and sidebarSectionAt(mouseX, mouseY) or nil
+    if nextSection then
+      section = nextSection
+      selected = 1
+      page = 0
+      draw()
+    elseif not dashboard and section ~= "main" and ui.inside(mouseX, mouseY, backX, backY, backWidth, 1) then
       section = parentSection()
       selected = 1
       page = 0

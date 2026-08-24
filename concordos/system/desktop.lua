@@ -94,7 +94,7 @@ local function appPosition(output, slot)
 end
 
 local function drawAppCard(output, x, y, width, height, app, active)
-  local background = active and colors.gray or colors.black
+  local background = colors.black
   local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
   ui.fill(output, x, y, 1, height, accent)

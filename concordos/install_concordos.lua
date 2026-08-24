@@ -4387,7 +4387,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.18.0",
+  version = "0.18.1",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4598,7 +4598,7 @@ local function appPosition(output, slot)
 end
 
 local function drawAppCard(output, x, y, width, height, app, active)
-  local background = active and colors.gray or colors.black
+  local background = colors.black
   local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
   ui.fill(output, x, y, 1, height, accent)

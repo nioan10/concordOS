@@ -233,18 +233,72 @@ function orders.groupOrders(groupId)
   return result
 end
 
-function orders.groupProgress(groupId)
+local function groupProgressFrom(orderList, groupId)
   local requested, accepted, active, cancelled = 0, 0, 0, 0
-  for _, order in ipairs(orders.load().orders) do
+  local acceptedPositions, totalPositions = 0, 0
+  for _, order in ipairs(orderList or {}) do
     if order.groupId == groupId then
+      totalPositions = totalPositions + 1
       requested = requested + (tonumber(order.requested) or 0)
       accepted = accepted + (tonumber(order.accepted) or 0)
       if order.state == "active" then active = active + 1 end
       if order.state == "cancelled" then cancelled = cancelled + 1 end
+      if order.state == "accepted" then acceptedPositions = acceptedPositions + 1 end
     end
   end
-  local state = active > 0 and "active" or (accepted >= requested and requested > 0 and "accepted" or "cancelled")
-  return { requested = requested, accepted = accepted, active = active, cancelled = cancelled, state = state }
+  local state
+  if active > 0 then
+    state = "active"
+  elseif cancelled > 0 and acceptedPositions > 0 then
+    -- The request itself is over, but it was deliberately completed only in part.
+    state = "partial"
+  elseif acceptedPositions > 0 then
+    state = "accepted"
+  else
+    state = "cancelled"
+  end
+  return {
+    requested = requested,
+    accepted = accepted,
+    active = active,
+    cancelled = cancelled,
+    acceptedPositions = acceptedPositions,
+    totalPositions = totalPositions,
+    state = state,
+  }
+end
+
+function orders.groupProgress(groupId)
+  return groupProgressFrom(orders.load().orders, groupId)
+end
+
+-- Compact data for the orders dashboard. Standalone means a normal permanent
+-- request not created as part of a construction order.
+function orders.overview()
+  local data = orders.load()
+  local result = {
+    groups = #data.groups,
+    activeGroups = 0,
+    partialGroups = 0,
+    acceptedGroups = 0,
+    cancelledGroups = 0,
+    standaloneActive = 0,
+    standaloneTotal = 0,
+  }
+  for _, group in ipairs(data.groups) do
+    local progress = groupProgressFrom(data.orders, group.id)
+    if progress.state == "active" then result.activeGroups = result.activeGroups + 1
+    elseif progress.state == "partial" then result.partialGroups = result.partialGroups + 1
+    elseif progress.state == "accepted" then result.acceptedGroups = result.acceptedGroups + 1
+    else result.cancelledGroups = result.cancelledGroups + 1 end
+  end
+  for _, order in ipairs(data.orders) do
+    if not order.groupId then
+      result.standaloneTotal = result.standaloneTotal + 1
+      if order.state == "active" then result.standaloneActive = result.standaloneActive + 1 end
+    end
+  end
+  return result
 end
 
 function orders.cancel(id)

@@ -1,12 +1,14 @@
--- Persistent Stock Ticker orders. An order is complete when Create accepts
--- the requested quantity for transport; delivery itself is handled by Create.
+-- Persistent Stock Ticker orders. Accepted means accepted by the Stock Ticker;
+-- Create does not expose an arrival confirmation for the destination package.
 local orders = {}
 
 local ROOT = "/concordos"
 local PATH = ROOT .. "/data/orders.db"
+local TICK_LOCK_PATH = ROOT .. "/data/orders.tick.lock"
 local activity = dofile(ROOT .. "/system/lib/activity.lua")
 local RETRY_BASE_MS = 30000
 local RETRY_MAX_MS = 120000
+local TICK_LOCK_STALE_MS = 60000
 local function now()
   if os.epoch then return os.epoch("utc") end
   return math.floor(os.clock() * 1000)
@@ -29,6 +31,56 @@ local function rememberAddress(data, address)
   end
   table.insert(data.addresses, 1, address)
   while #data.addresses > 12 do table.remove(data.addresses) end
+end
+
+local function orderKey(address, item)
+  return tostring(address or "") .. "\0" .. tostring(item or "")
+end
+
+local function duplicateEntries(data, address, items)
+  local wanted, result = {}, {}
+  for _, entry in ipairs(items or {}) do
+    local item = type(entry) == "table" and (entry.item or entry.name) or entry
+    if item and tostring(item) ~= "" then wanted[tostring(item)] = true end
+  end
+  for _, order in ipairs(data.orders or {}) do
+    if order.state == "active" and tostring(order.address or "") == tostring(address or "") and wanted[tostring(order.item or "")] then
+      result[#result + 1] = order
+    end
+  end
+  table.sort(result, function(a, b) return tonumber(a.id) < tonumber(b.id) end)
+  return result
+end
+
+local function duplicateMessage(conflicts)
+  local labels = {}
+  for index = 1, math.min(3, #conflicts) do
+    local order = conflicts[index]
+    labels[#labels + 1] = "№" .. tostring(order.id) .. " (" .. tostring(order.item) .. ")"
+  end
+  if #conflicts > 3 then labels[#labels + 1] = "и ещё " .. tostring(#conflicts - 3) end
+  return "Уже есть активная заявка: " .. table.concat(labels, ", ")
+end
+
+local function acquireTickLock(current)
+  if fs.exists(TICK_LOCK_PATH) then
+    local file = fs.open(TICK_LOCK_PATH, "r")
+    local lockedAt = file and tonumber(file.readAll()) or nil
+    if file then file.close() end
+    if lockedAt and current >= lockedAt and current - lockedAt < TICK_LOCK_STALE_MS then return false end
+    fs.delete(TICK_LOCK_PATH)
+  end
+  local directory = fs.getDir(TICK_LOCK_PATH)
+  if not fs.exists(directory) then fs.makeDir(directory) end
+  local file = fs.open(TICK_LOCK_PATH, "w")
+  if not file then return false end
+  file.write(tostring(current))
+  file.close()
+  return true
+end
+
+local function releaseTickLock()
+  if fs.exists(TICK_LOCK_PATH) then fs.delete(TICK_LOCK_PATH) end
 end
 
 function orders.load()
@@ -61,6 +113,12 @@ end
 
 function orders.create(address, item, count)
   local data = orders.load()
+  local conflicts = duplicateEntries(data, address, { item })
+  if #conflicts > 0 then
+    local message = duplicateMessage(conflicts)
+    log("Заблокирован дубль: " .. tostring(item) .. " → " .. tostring(address))
+    return nil, message, conflicts
+  end
   local order = {
     id = data.nextId,
     address = tostring(address),
@@ -96,6 +154,13 @@ function orders.createGroup(address, items, title)
   for item in pairs(grouped) do names[#names + 1] = item end
   table.sort(names)
   if #names == 0 then return nil, "Нет позиций для заказа" end
+
+  local conflicts = duplicateEntries(data, address, names)
+  if #conflicts > 0 then
+    local message = duplicateMessage(conflicts)
+    log("Заблокирован дубль заказа стройки → " .. tostring(address))
+    return nil, message, conflicts
+  end
 
   local group = {
     id = data.nextGroupId,
@@ -256,19 +321,58 @@ function orders.active()
   return result
 end
 
-function orders.tick(forceOrderId)
+-- Read-only view used by the operations audit. Duplicate means same active item and address.
+function orders.audit()
+  local data = orders.load()
+  local groups, buckets = {}, {}
+  for _, group in ipairs(data.groups) do groups[group.id] = group end
+  for _, order in ipairs(data.orders) do
+    if order.state == 'active' then
+      local key = orderKey(order.address, order.item)
+      buckets[key] = buckets[key] or {}
+      buckets[key][#buckets[key] + 1] = order
+    end
+  end
+
+  local duplicateSets, duplicateOrders, active = 0, 0, 0
+  for _, ordersAtKey in pairs(buckets) do
+    if #ordersAtKey > 1 then
+      duplicateSets = duplicateSets + 1
+      duplicateOrders = duplicateOrders + #ordersAtKey
+    end
+  end
+
+  local entries = {}
+  for _, order in ipairs(data.orders) do
+    local duplicate = order.state == 'active' and #(buckets[orderKey(order.address, order.item)] or {}) > 1
+    if order.state == 'active' then active = active + 1 end
+    entries[#entries + 1] = { order = order, group = groups[order.groupId], duplicate = duplicate }
+  end
+  table.sort(entries, function(a, b)
+    if a.duplicate ~= b.duplicate then return a.duplicate end
+    local aActive, bActive = a.order.state == 'active', b.order.state == 'active'
+    if aActive ~= bActive then return aActive end
+    return tonumber(a.order.id) > tonumber(b.order.id)
+  end)
+  return {
+    entries = entries,
+    active = active,
+    duplicateSets = duplicateSets,
+    duplicateOrders = duplicateOrders,
+  }
+end
+local function performTick(forceOrderId, current)
   local data = orders.load()
   local changed = false
   local stockTicker = peripheral.find("Create_StockTicker")
-  local current = now()
 
   for _, order in ipairs(data.orders) do
     if order.state == "active" then
       local remaining = orders.remaining(order)
       if remaining <= 0 then
         order.state = "accepted"
-        order.lastResult = "Весь объём принят сетью"
-        log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
+        order.lastResult = "Сеть приняла весь объём; прибытие не подтверждается"
+        log("Сеть приняла заявку №" .. tostring(order.id) .. ": " .. order.item .. " ×" .. tostring(order.requested))
         changed = true
       elseif stockTicker and (forceOrderId == order.id or current >= (tonumber(order.nextAttemptAt) or 0)) then
         order.lastAttemptAt = current
@@ -282,8 +386,8 @@ function orders.tick(forceOrderId)
           order.accepted = math.min(order.requested, (tonumber(order.accepted) or 0) + accepted)
           if orders.remaining(order) <= 0 then
             order.state = "accepted"
-            order.lastResult = "Весь объём принят сетью"
-            log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
+            order.lastResult = "Сеть приняла весь объём; прибытие не подтверждается"
+            log("Сеть приняла заявку №" .. tostring(order.id) .. ": " .. order.item .. " ×" .. tostring(order.requested))
           else
             if accepted > 0 then order.emptyAttempts = 0 else order.emptyAttempts = (tonumber(order.emptyAttempts) or 0) + 1 end
             local delay = math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ^ math.max(0, (tonumber(order.emptyAttempts) or 0) - 1)))
@@ -313,4 +417,20 @@ function orders.tick(forceOrderId)
   return data
 end
 
+local function runTick(forceOrderId)
+  local current = now()
+  if not acquireTickLock(current) then return orders.load(), 'busy' end
+  local ok, result = xpcall(function()
+    return performTick(forceOrderId, current)
+  end, function(err)
+    return tostring(err)
+  end)
+  releaseTickLock()
+  if not ok then error(result, 0) end
+  return result
+end
+
+function orders.tick(forceOrderId)
+  return runTick(forceOrderId)
+end
 return orders

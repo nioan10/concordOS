@@ -22,10 +22,13 @@ local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
 local producedItems = {}
 local selectedGroupId, groupDetailPage = nil, 0
+local groupReturnPage = 'orders'
 local GROUP_DETAIL_PAGE_SIZE = 3 -- positions per page
 local groupSearch, groupSearchActive = '', false
 local groupFilter, groupListPage = 'all', 0
 local GROUP_LIST_PAGE_SIZE = 2
+local auditPage = 0
+local AUDIT_PAGE_SIZE = 3
 
 local tabs = {
   { id = "order", label = "Заказать" },
@@ -140,7 +143,7 @@ local function drawHeader(width)
   local tabWidth = math.max(10, math.floor(width / #tabs))
   for index, tab in ipairs(tabs) do
     local x = 1 + (index - 1) * tabWidth
-    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or (page == 'group' and tab.id == 'orders'))
+    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or ((page == 'group' or page == 'audit') and tab.id == 'orders'))
   end
 end
 
@@ -308,7 +311,7 @@ end
 
 local function orderStateLabel(order)
   if order.state == 'active' then return 'ожидание' end
-  if order.state == 'accepted' then return 'готово' end
+  if order.state == 'accepted' then return 'принято' end
   if order.state == 'cancelled' then return 'отмена' end
   return tostring(order.state or '?')
 end
@@ -339,7 +342,7 @@ local function drawOrders(width, height)
   local filters = {
     { id = 'all', label = 'Все' },
     { id = 'active', label = 'Работа' },
-    { id = 'accepted', label = 'Готово' },
+    { id = 'accepted', label = 'Принято' },
     { id = 'cancelled', label = 'Отмена' },
   }
   local filterWidth = math.max(7, math.floor((width - 3) / #filters))
@@ -349,6 +352,7 @@ local function drawOrders(width, height)
     ui.button(output, x, 5, buttonWidth, 1, filter.label, colors.white, colors.blue, groupFilter == filter.id)
   end
   ui.text(output, 2, 6, 'Поиск по названию или адресу', colors.lightGray, colors.gray)
+  ui.button(output, width - 9, 6, 8, 1, 'Аудит', colors.white, colors.purple, false)
   ui.line(output, 2, 7, width - 3, ru.fit(groupSearch .. (groupSearchActive and '|' or ''), width - 3, ''), colors.white, groupSearchActive and colors.black or colors.gray)
 
   local groups = filteredGroups()
@@ -360,7 +364,7 @@ local function drawOrders(width, height)
     if entry then
       local row = 9 + offset * 4
       local group, progress = entry.group, entry.progress
-      local state = progress.state == 'active' and 'в работе' or (progress.state == 'accepted' and 'готово' or 'отмена')
+      local state = progress.state == 'active' and 'в работе' or (progress.state == 'accepted' and 'принято' or 'отмена')
       ui.line(output, 2, row, width - 3, 'Стройка №' .. tostring(group.id) .. ' [' .. state .. '] ' .. ru.fit(group.title, width - 22, ''), colors.white, colors.gray)
       ui.line(output, 2, row + 1, width - 16, progressBar(progress), colors.lightGray, colors.black)
       ui.button(output, width - 14, row + 1, 6, 1, 'Состав', colors.white, colors.purple, false)
@@ -377,6 +381,43 @@ local function drawOrders(width, height)
   ui.button(output, 3 + leftWidth, height - 2, width - 3 - leftWidth, 1, 'След. >', colors.white, colors.gray, groupListPage < pages - 1)
   ui.line(output, 2, height - 1, width - 3, 'Найдено: ' .. tostring(#groups) .. ' | Стр. ' .. tostring(groupListPage + 1) .. '/' .. tostring(pages), colors.lightGray, colors.gray)
 end
+
+local function drawAudit(width, height)
+  local audit = orders.audit()
+  local entries = audit.entries
+  local pages = math.max(1, math.ceil(#entries / AUDIT_PAGE_SIZE))
+  if auditPage >= pages then auditPage = pages - 1 end
+  ui.button(output, 2, 5, 11, 1, '< Назад', colors.white, colors.blue, false)
+  ui.text(output, 14, 5, 'Аудит всех заявок', colors.white, colors.gray)
+  local duplicateText = audit.duplicateSets > 0 and ('Дубли: ' .. tostring(audit.duplicateSets) .. ' (' .. tostring(audit.duplicateOrders) .. ' строк)') or 'Дублей нет'
+  ui.line(output, 2, 6, width - 3, 'Активных: ' .. tostring(audit.active) .. ' | ' .. duplicateText, audit.duplicateSets > 0 and colors.red or colors.lime, colors.gray)
+  ui.line(output, 2, 7, width - 3, 'Дубль = активный предмет на том же адресе. R/X только у активных.', colors.lightGray, colors.gray)
+
+  local first = auditPage * AUDIT_PAGE_SIZE + 1
+  for offset = 0, AUDIT_PAGE_SIZE - 1 do
+    local entry = entries[first + offset]
+    if entry then
+      local order = entry.order
+      local row = 9 + offset * 3
+      local owner = entry.group and ('Стр. №' .. tostring(entry.group.id)) or 'Обычная'
+      local title = (entry.duplicate and '! ДУБЛЬ ' or '') .. '№' .. tostring(order.id) .. ' [' .. owner .. '/' .. orderStateLabel(order) .. '] ' .. tostring(order.item)
+      itemLine(row, width, title, order.item, entry.duplicate and colors.red or colors.white, offset % 2 == 0 and colors.gray or colors.black)
+      ui.line(output, 2, row + 1, width - 11, orderBar(order), colors.lightGray, colors.black)
+      if order.state == 'active' then
+        ui.button(output, width - 8, row + 1, 3, 1, 'R', colors.white, colors.blue, false)
+        ui.button(output, width - 4, row + 1, 3, 1, 'X', colors.white, colors.red, false)
+      else
+        ui.text(output, width - 9, row + 1, 'история', colors.lightGray, colors.black)
+      end
+      ui.line(output, 2, row + 2, width - 3, ru.fit('-> ' .. tostring(order.address) .. ' | ' .. tostring(order.lastResult or ''), width - 3, ''), colors.lightGray, colors.gray)
+    end
+  end
+  if #entries == 0 then ui.text(output, 2, 10, 'Заявок нет.', colors.lime, colors.gray) end
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, height - 1, leftWidth, 1, '< Пред.', colors.white, colors.gray, auditPage > 0)
+  ui.button(output, 3 + leftWidth, height - 1, width - 3 - leftWidth, 1, 'След. >', colors.white, colors.gray, auditPage < pages - 1)
+end
+
 local function drawGroupDetails(width, height)
   local group = orders.getGroup(selectedGroupId)
   if not group then
@@ -448,6 +489,7 @@ local function draw()
   elseif page == "stock" then drawStock(width)
   elseif page == "clipboard" then drawClipboard(width)
   elseif page == "orders" then drawOrders(width, height)
+  elseif page == 'audit' then drawAudit(width, height)
   elseif page == "network" then drawNetwork(width)
   end
   ui.line(output, 1, height, width, ru.fit(statusText, width, ""), statusColor, colors.black)
@@ -460,7 +502,12 @@ local function submitOrder()
     confirmation = false
     return
   end
-  local order = orders.create(fields.address, fields.item, amount)
+  local order, createErr = orders.create(fields.address, fields.item, amount)
+  if not order then
+    setStatus(tostring(createErr or 'Заявка заблокирована'), colors.red)
+    confirmation = false
+    return
+  end
   local ok, err = pcall(orders.tick, order.id)
   if ok then
     setStatus("Заявка №" .. tostring(order.id) .. " создана", colors.lime)
@@ -529,7 +576,7 @@ local function activateTab(index)
   local tab = tabs[index]
   if tab then
     page, confirmation = tab.id, false
-    if page == 'orders' then selectedGroupId, groupDetailPage = nil, 0 end
+    if page == 'orders' then selectedGroupId, groupDetailPage, auditPage = nil, 0, 0 end
     groupSearchActive = false
     activeField = page == "stock" and "search" or "address"
     if page == "stock" then loadCatalog() end
@@ -551,7 +598,9 @@ while true do
   elseif event == "key" then
     if a == keys.escape then
       if page == 'group' then
-        page, selectedGroupId, groupDetailPage, activeField = 'orders', nil, 0, nil
+        page, selectedGroupId, groupDetailPage, activeField = groupReturnPage, nil, 0, nil
+      elseif page == 'audit' then
+        page, auditPage, activeField = 'orders', 0, nil
       elseif groupSearchActive then
         groupSearchActive = false
       else
@@ -683,6 +732,8 @@ while true do
           local index = math.min(4, math.max(1, math.floor((x - 2) / filterWidth) + 1))
           local filters = { 'all', 'active', 'accepted', 'cancelled' }
           groupFilter, groupListPage, groupSearchActive = filters[index], 0, false
+        elseif y == 6 and x >= width - 9 then
+          page, auditPage, groupSearchActive, activeField = 'audit', 0, false, nil
         elseif y == 7 then
           groupSearchActive, activeField = true, nil
         elseif y == height - 2 then
@@ -710,13 +761,45 @@ while true do
             elseif y == row + 1 and x >= width - 4 then
               if orders.cancelGroup(group.id) then setStatus('Заказ стройки отменён', colors.orange) end
             else
+              groupReturnPage = 'orders'
               page, selectedGroupId, groupDetailPage, activeField = 'group', group.id, 0, nil
+            end
+          end
+        end
+      elseif page == 'audit' then
+        if y == 5 and x < 13 then
+          page, auditPage, activeField = 'orders', 0, nil
+        elseif y == height - 1 then
+          local entries = orders.audit().entries
+          local totalPages = math.max(1, math.ceil(#entries / AUDIT_PAGE_SIZE))
+          local leftWidth = math.floor((width - 3) / 2)
+          if x < 3 + leftWidth then
+            auditPage = math.max(0, auditPage - 1)
+          else
+            auditPage = math.min(totalPages - 1, auditPage + 1)
+          end
+        elseif y >= 9 and y <= 9 + (AUDIT_PAGE_SIZE - 1) * 3 + 1 then
+          local offset = math.floor((y - 9) / 3)
+          local row = 9 + offset * 3
+          local entry = orders.audit().entries[auditPage * AUDIT_PAGE_SIZE + offset + 1]
+          if entry then
+            local order = entry.order
+            if order.state == 'active' and y == row + 1 and x >= width - 8 and x <= width - 6 then
+              if orders.retry(order.id) then
+                pcall(orders.tick, order.id)
+                setStatus('Повтор позиции отправлен', colors.lime)
+              end
+            elseif order.state == 'active' and y == row + 1 and x >= width - 4 then
+              if orders.cancel(order.id) then setStatus('Заявка отменена', colors.orange) end
+            elseif y == row and entry.group then
+              groupReturnPage = 'audit'
+              page, selectedGroupId, groupDetailPage, activeField = 'group', entry.group.id, 0, nil
             end
           end
         end
       elseif page == 'group' then
         if y == 5 and x < 13 then
-          page, selectedGroupId, groupDetailPage, activeField = 'orders', nil, 0, nil
+          page, selectedGroupId, groupDetailPage, activeField = groupReturnPage, nil, 0, nil
         elseif y == height - 1 then
           local groupEntries = orders.groupOrders(selectedGroupId)
           local totalPages = math.max(1, math.ceil(#groupEntries / GROUP_DETAIL_PAGE_SIZE))

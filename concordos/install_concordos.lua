@@ -673,7 +673,12 @@ local function persistentRequest()
     sayLine("Отменено.") pause() return
   end
 
-  local order = orders.create(address, item, count)
+  local order, createErr = orders.create(address, item, count)
+  if not order then
+    sayLine(tostring(createErr or "Заявка заблокирована"))
+    pause()
+    return
+  end
   local ok, err = pcall(orders.tick, order.id)
   if not ok then
     sayLine("Заявка сохранена, но первая отправка не удалась: " .. tostring(err))
@@ -695,7 +700,6 @@ local function showOrders()
   native.setTextColor(colors.red)
   sayLine("Постоянные заявки")
   native.setTextColor(colors.white)
-  pcall(orders.tick)
   local data = orders.load()
   if #data.orders == 0 then sayLine("Заявок ещё нет.") pause() return end
   local first = math.max(1, #data.orders - 5)
@@ -952,10 +956,13 @@ local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
 local producedItems = {}
 local selectedGroupId, groupDetailPage = nil, 0
+local groupReturnPage = 'orders'
 local GROUP_DETAIL_PAGE_SIZE = 3 -- positions per page
 local groupSearch, groupSearchActive = '', false
 local groupFilter, groupListPage = 'all', 0
 local GROUP_LIST_PAGE_SIZE = 2
+local auditPage = 0
+local AUDIT_PAGE_SIZE = 3
 
 local tabs = {
   { id = "order", label = "Заказать" },
@@ -1070,7 +1077,7 @@ local function drawHeader(width)
   local tabWidth = math.max(10, math.floor(width / #tabs))
   for index, tab in ipairs(tabs) do
     local x = 1 + (index - 1) * tabWidth
-    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or (page == 'group' and tab.id == 'orders'))
+    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or ((page == 'group' or page == 'audit') and tab.id == 'orders'))
   end
 end
 
@@ -1238,7 +1245,7 @@ end
 
 local function orderStateLabel(order)
   if order.state == 'active' then return 'ожидание' end
-  if order.state == 'accepted' then return 'готово' end
+  if order.state == 'accepted' then return 'принято' end
   if order.state == 'cancelled' then return 'отмена' end
   return tostring(order.state or '?')
 end
@@ -1269,7 +1276,7 @@ local function drawOrders(width, height)
   local filters = {
     { id = 'all', label = 'Все' },
     { id = 'active', label = 'Работа' },
-    { id = 'accepted', label = 'Готово' },
+    { id = 'accepted', label = 'Принято' },
     { id = 'cancelled', label = 'Отмена' },
   }
   local filterWidth = math.max(7, math.floor((width - 3) / #filters))
@@ -1279,6 +1286,7 @@ local function drawOrders(width, height)
     ui.button(output, x, 5, buttonWidth, 1, filter.label, colors.white, colors.blue, groupFilter == filter.id)
   end
   ui.text(output, 2, 6, 'Поиск по названию или адресу', colors.lightGray, colors.gray)
+  ui.button(output, width - 9, 6, 8, 1, 'Аудит', colors.white, colors.purple, false)
   ui.line(output, 2, 7, width - 3, ru.fit(groupSearch .. (groupSearchActive and '|' or ''), width - 3, ''), colors.white, groupSearchActive and colors.black or colors.gray)
 
   local groups = filteredGroups()
@@ -1290,7 +1298,7 @@ local function drawOrders(width, height)
     if entry then
       local row = 9 + offset * 4
       local group, progress = entry.group, entry.progress
-      local state = progress.state == 'active' and 'в работе' or (progress.state == 'accepted' and 'готово' or 'отмена')
+      local state = progress.state == 'active' and 'в работе' or (progress.state == 'accepted' and 'принято' or 'отмена')
       ui.line(output, 2, row, width - 3, 'Стройка №' .. tostring(group.id) .. ' [' .. state .. '] ' .. ru.fit(group.title, width - 22, ''), colors.white, colors.gray)
       ui.line(output, 2, row + 1, width - 16, progressBar(progress), colors.lightGray, colors.black)
       ui.button(output, width - 14, row + 1, 6, 1, 'Состав', colors.white, colors.purple, false)
@@ -1307,6 +1315,43 @@ local function drawOrders(width, height)
   ui.button(output, 3 + leftWidth, height - 2, width - 3 - leftWidth, 1, 'След. >', colors.white, colors.gray, groupListPage < pages - 1)
   ui.line(output, 2, height - 1, width - 3, 'Найдено: ' .. tostring(#groups) .. ' | Стр. ' .. tostring(groupListPage + 1) .. '/' .. tostring(pages), colors.lightGray, colors.gray)
 end
+
+local function drawAudit(width, height)
+  local audit = orders.audit()
+  local entries = audit.entries
+  local pages = math.max(1, math.ceil(#entries / AUDIT_PAGE_SIZE))
+  if auditPage >= pages then auditPage = pages - 1 end
+  ui.button(output, 2, 5, 11, 1, '< Назад', colors.white, colors.blue, false)
+  ui.text(output, 14, 5, 'Аудит всех заявок', colors.white, colors.gray)
+  local duplicateText = audit.duplicateSets > 0 and ('Дубли: ' .. tostring(audit.duplicateSets) .. ' (' .. tostring(audit.duplicateOrders) .. ' строк)') or 'Дублей нет'
+  ui.line(output, 2, 6, width - 3, 'Активных: ' .. tostring(audit.active) .. ' | ' .. duplicateText, audit.duplicateSets > 0 and colors.red or colors.lime, colors.gray)
+  ui.line(output, 2, 7, width - 3, 'Дубль = активный предмет на том же адресе. R/X только у активных.', colors.lightGray, colors.gray)
+
+  local first = auditPage * AUDIT_PAGE_SIZE + 1
+  for offset = 0, AUDIT_PAGE_SIZE - 1 do
+    local entry = entries[first + offset]
+    if entry then
+      local order = entry.order
+      local row = 9 + offset * 3
+      local owner = entry.group and ('Стр. №' .. tostring(entry.group.id)) or 'Обычная'
+      local title = (entry.duplicate and '! ДУБЛЬ ' or '') .. '№' .. tostring(order.id) .. ' [' .. owner .. '/' .. orderStateLabel(order) .. '] ' .. tostring(order.item)
+      itemLine(row, width, title, order.item, entry.duplicate and colors.red or colors.white, offset % 2 == 0 and colors.gray or colors.black)
+      ui.line(output, 2, row + 1, width - 11, orderBar(order), colors.lightGray, colors.black)
+      if order.state == 'active' then
+        ui.button(output, width - 8, row + 1, 3, 1, 'R', colors.white, colors.blue, false)
+        ui.button(output, width - 4, row + 1, 3, 1, 'X', colors.white, colors.red, false)
+      else
+        ui.text(output, width - 9, row + 1, 'история', colors.lightGray, colors.black)
+      end
+      ui.line(output, 2, row + 2, width - 3, ru.fit('-> ' .. tostring(order.address) .. ' | ' .. tostring(order.lastResult or ''), width - 3, ''), colors.lightGray, colors.gray)
+    end
+  end
+  if #entries == 0 then ui.text(output, 2, 10, 'Заявок нет.', colors.lime, colors.gray) end
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, height - 1, leftWidth, 1, '< Пред.', colors.white, colors.gray, auditPage > 0)
+  ui.button(output, 3 + leftWidth, height - 1, width - 3 - leftWidth, 1, 'След. >', colors.white, colors.gray, auditPage < pages - 1)
+end
+
 local function drawGroupDetails(width, height)
   local group = orders.getGroup(selectedGroupId)
   if not group then
@@ -1378,6 +1423,7 @@ local function draw()
   elseif page == "stock" then drawStock(width)
   elseif page == "clipboard" then drawClipboard(width)
   elseif page == "orders" then drawOrders(width, height)
+  elseif page == 'audit' then drawAudit(width, height)
   elseif page == "network" then drawNetwork(width)
   end
   ui.line(output, 1, height, width, ru.fit(statusText, width, ""), statusColor, colors.black)
@@ -1390,7 +1436,12 @@ local function submitOrder()
     confirmation = false
     return
   end
-  local order = orders.create(fields.address, fields.item, amount)
+  local order, createErr = orders.create(fields.address, fields.item, amount)
+  if not order then
+    setStatus(tostring(createErr or 'Заявка заблокирована'), colors.red)
+    confirmation = false
+    return
+  end
   local ok, err = pcall(orders.tick, order.id)
   if ok then
     setStatus("Заявка №" .. tostring(order.id) .. " создана", colors.lime)
@@ -1459,7 +1510,7 @@ local function activateTab(index)
   local tab = tabs[index]
   if tab then
     page, confirmation = tab.id, false
-    if page == 'orders' then selectedGroupId, groupDetailPage = nil, 0 end
+    if page == 'orders' then selectedGroupId, groupDetailPage, auditPage = nil, 0, 0 end
     groupSearchActive = false
     activeField = page == "stock" and "search" or "address"
     if page == "stock" then loadCatalog() end
@@ -1481,7 +1532,9 @@ while true do
   elseif event == "key" then
     if a == keys.escape then
       if page == 'group' then
-        page, selectedGroupId, groupDetailPage, activeField = 'orders', nil, 0, nil
+        page, selectedGroupId, groupDetailPage, activeField = groupReturnPage, nil, 0, nil
+      elseif page == 'audit' then
+        page, auditPage, activeField = 'orders', 0, nil
       elseif groupSearchActive then
         groupSearchActive = false
       else
@@ -1613,6 +1666,8 @@ while true do
           local index = math.min(4, math.max(1, math.floor((x - 2) / filterWidth) + 1))
           local filters = { 'all', 'active', 'accepted', 'cancelled' }
           groupFilter, groupListPage, groupSearchActive = filters[index], 0, false
+        elseif y == 6 and x >= width - 9 then
+          page, auditPage, groupSearchActive, activeField = 'audit', 0, false, nil
         elseif y == 7 then
           groupSearchActive, activeField = true, nil
         elseif y == height - 2 then
@@ -1640,13 +1695,45 @@ while true do
             elseif y == row + 1 and x >= width - 4 then
               if orders.cancelGroup(group.id) then setStatus('Заказ стройки отменён', colors.orange) end
             else
+              groupReturnPage = 'orders'
               page, selectedGroupId, groupDetailPage, activeField = 'group', group.id, 0, nil
+            end
+          end
+        end
+      elseif page == 'audit' then
+        if y == 5 and x < 13 then
+          page, auditPage, activeField = 'orders', 0, nil
+        elseif y == height - 1 then
+          local entries = orders.audit().entries
+          local totalPages = math.max(1, math.ceil(#entries / AUDIT_PAGE_SIZE))
+          local leftWidth = math.floor((width - 3) / 2)
+          if x < 3 + leftWidth then
+            auditPage = math.max(0, auditPage - 1)
+          else
+            auditPage = math.min(totalPages - 1, auditPage + 1)
+          end
+        elseif y >= 9 and y <= 9 + (AUDIT_PAGE_SIZE - 1) * 3 + 1 then
+          local offset = math.floor((y - 9) / 3)
+          local row = 9 + offset * 3
+          local entry = orders.audit().entries[auditPage * AUDIT_PAGE_SIZE + offset + 1]
+          if entry then
+            local order = entry.order
+            if order.state == 'active' and y == row + 1 and x >= width - 8 and x <= width - 6 then
+              if orders.retry(order.id) then
+                pcall(orders.tick, order.id)
+                setStatus('Повтор позиции отправлен', colors.lime)
+              end
+            elseif order.state == 'active' and y == row + 1 and x >= width - 4 then
+              if orders.cancel(order.id) then setStatus('Заявка отменена', colors.orange) end
+            elseif y == row and entry.group then
+              groupReturnPage = 'audit'
+              page, selectedGroupId, groupDetailPage, activeField = 'group', entry.group.id, 0, nil
             end
           end
         end
       elseif page == 'group' then
         if y == 5 and x < 13 then
-          page, selectedGroupId, groupDetailPage, activeField = 'orders', nil, 0, nil
+          page, selectedGroupId, groupDetailPage, activeField = groupReturnPage, nil, 0, nil
         elseif y == height - 1 then
           local groupEntries = orders.groupOrders(selectedGroupId)
           local totalPages = math.max(1, math.ceil(#groupEntries / GROUP_DETAIL_PAGE_SIZE))
@@ -4387,7 +4474,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.18.1",
+  version = "0.19.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4845,15 +4932,17 @@ while true do
   pcall(orders.tick)
   sleep(15)
 end]====],
-  ["/concordos/system/lib/orders.lua"] = [====[-- Persistent Stock Ticker orders. An order is complete when Create accepts
--- the requested quantity for transport; delivery itself is handled by Create.
+  ["/concordos/system/lib/orders.lua"] = [====[-- Persistent Stock Ticker orders. Accepted means accepted by the Stock Ticker;
+-- Create does not expose an arrival confirmation for the destination package.
 local orders = {}
 
 local ROOT = "/concordos"
 local PATH = ROOT .. "/data/orders.db"
+local TICK_LOCK_PATH = ROOT .. "/data/orders.tick.lock"
 local activity = dofile(ROOT .. "/system/lib/activity.lua")
 local RETRY_BASE_MS = 30000
 local RETRY_MAX_MS = 120000
+local TICK_LOCK_STALE_MS = 60000
 local function now()
   if os.epoch then return os.epoch("utc") end
   return math.floor(os.clock() * 1000)
@@ -4876,6 +4965,56 @@ local function rememberAddress(data, address)
   end
   table.insert(data.addresses, 1, address)
   while #data.addresses > 12 do table.remove(data.addresses) end
+end
+
+local function orderKey(address, item)
+  return tostring(address or "") .. "\0" .. tostring(item or "")
+end
+
+local function duplicateEntries(data, address, items)
+  local wanted, result = {}, {}
+  for _, entry in ipairs(items or {}) do
+    local item = type(entry) == "table" and (entry.item or entry.name) or entry
+    if item and tostring(item) ~= "" then wanted[tostring(item)] = true end
+  end
+  for _, order in ipairs(data.orders or {}) do
+    if order.state == "active" and tostring(order.address or "") == tostring(address or "") and wanted[tostring(order.item or "")] then
+      result[#result + 1] = order
+    end
+  end
+  table.sort(result, function(a, b) return tonumber(a.id) < tonumber(b.id) end)
+  return result
+end
+
+local function duplicateMessage(conflicts)
+  local labels = {}
+  for index = 1, math.min(3, #conflicts) do
+    local order = conflicts[index]
+    labels[#labels + 1] = "№" .. tostring(order.id) .. " (" .. tostring(order.item) .. ")"
+  end
+  if #conflicts > 3 then labels[#labels + 1] = "и ещё " .. tostring(#conflicts - 3) end
+  return "Уже есть активная заявка: " .. table.concat(labels, ", ")
+end
+
+local function acquireTickLock(current)
+  if fs.exists(TICK_LOCK_PATH) then
+    local file = fs.open(TICK_LOCK_PATH, "r")
+    local lockedAt = file and tonumber(file.readAll()) or nil
+    if file then file.close() end
+    if lockedAt and current >= lockedAt and current - lockedAt < TICK_LOCK_STALE_MS then return false end
+    fs.delete(TICK_LOCK_PATH)
+  end
+  local directory = fs.getDir(TICK_LOCK_PATH)
+  if not fs.exists(directory) then fs.makeDir(directory) end
+  local file = fs.open(TICK_LOCK_PATH, "w")
+  if not file then return false end
+  file.write(tostring(current))
+  file.close()
+  return true
+end
+
+local function releaseTickLock()
+  if fs.exists(TICK_LOCK_PATH) then fs.delete(TICK_LOCK_PATH) end
 end
 
 function orders.load()
@@ -4908,6 +5047,12 @@ end
 
 function orders.create(address, item, count)
   local data = orders.load()
+  local conflicts = duplicateEntries(data, address, { item })
+  if #conflicts > 0 then
+    local message = duplicateMessage(conflicts)
+    log("Заблокирован дубль: " .. tostring(item) .. " → " .. tostring(address))
+    return nil, message, conflicts
+  end
   local order = {
     id = data.nextId,
     address = tostring(address),
@@ -4943,6 +5088,13 @@ function orders.createGroup(address, items, title)
   for item in pairs(grouped) do names[#names + 1] = item end
   table.sort(names)
   if #names == 0 then return nil, "Нет позиций для заказа" end
+
+  local conflicts = duplicateEntries(data, address, names)
+  if #conflicts > 0 then
+    local message = duplicateMessage(conflicts)
+    log("Заблокирован дубль заказа стройки → " .. tostring(address))
+    return nil, message, conflicts
+  end
 
   local group = {
     id = data.nextGroupId,
@@ -5103,19 +5255,58 @@ function orders.active()
   return result
 end
 
-function orders.tick(forceOrderId)
+-- Read-only view used by the operations audit. Duplicate means same active item and address.
+function orders.audit()
+  local data = orders.load()
+  local groups, buckets = {}, {}
+  for _, group in ipairs(data.groups) do groups[group.id] = group end
+  for _, order in ipairs(data.orders) do
+    if order.state == 'active' then
+      local key = orderKey(order.address, order.item)
+      buckets[key] = buckets[key] or {}
+      buckets[key][#buckets[key] + 1] = order
+    end
+  end
+
+  local duplicateSets, duplicateOrders, active = 0, 0, 0
+  for _, ordersAtKey in pairs(buckets) do
+    if #ordersAtKey > 1 then
+      duplicateSets = duplicateSets + 1
+      duplicateOrders = duplicateOrders + #ordersAtKey
+    end
+  end
+
+  local entries = {}
+  for _, order in ipairs(data.orders) do
+    local duplicate = order.state == 'active' and #(buckets[orderKey(order.address, order.item)] or {}) > 1
+    if order.state == 'active' then active = active + 1 end
+    entries[#entries + 1] = { order = order, group = groups[order.groupId], duplicate = duplicate }
+  end
+  table.sort(entries, function(a, b)
+    if a.duplicate ~= b.duplicate then return a.duplicate end
+    local aActive, bActive = a.order.state == 'active', b.order.state == 'active'
+    if aActive ~= bActive then return aActive end
+    return tonumber(a.order.id) > tonumber(b.order.id)
+  end)
+  return {
+    entries = entries,
+    active = active,
+    duplicateSets = duplicateSets,
+    duplicateOrders = duplicateOrders,
+  }
+end
+local function performTick(forceOrderId, current)
   local data = orders.load()
   local changed = false
   local stockTicker = peripheral.find("Create_StockTicker")
-  local current = now()
 
   for _, order in ipairs(data.orders) do
     if order.state == "active" then
       local remaining = orders.remaining(order)
       if remaining <= 0 then
         order.state = "accepted"
-        order.lastResult = "Весь объём принят сетью"
-        log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
+        order.lastResult = "Сеть приняла весь объём; прибытие не подтверждается"
+        log("Сеть приняла заявку №" .. tostring(order.id) .. ": " .. order.item .. " ×" .. tostring(order.requested))
         changed = true
       elseif stockTicker and (forceOrderId == order.id or current >= (tonumber(order.nextAttemptAt) or 0)) then
         order.lastAttemptAt = current
@@ -5129,8 +5320,8 @@ function orders.tick(forceOrderId)
           order.accepted = math.min(order.requested, (tonumber(order.accepted) or 0) + accepted)
           if orders.remaining(order) <= 0 then
             order.state = "accepted"
-            order.lastResult = "Весь объём принят сетью"
-            log("Заявка №" .. tostring(order.id) .. " завершена: " .. order.item .. " ×" .. tostring(order.requested))
+            order.lastResult = "Сеть приняла весь объём; прибытие не подтверждается"
+            log("Сеть приняла заявку №" .. tostring(order.id) .. ": " .. order.item .. " ×" .. tostring(order.requested))
           else
             if accepted > 0 then order.emptyAttempts = 0 else order.emptyAttempts = (tonumber(order.emptyAttempts) or 0) + 1 end
             local delay = math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ^ math.max(0, (tonumber(order.emptyAttempts) or 0) - 1)))
@@ -5160,6 +5351,22 @@ function orders.tick(forceOrderId)
   return data
 end
 
+local function runTick(forceOrderId)
+  local current = now()
+  if not acquireTickLock(current) then return orders.load(), 'busy' end
+  local ok, result = xpcall(function()
+    return performTick(forceOrderId, current)
+  end, function(err)
+    return tostring(err)
+  end)
+  releaseTickLock()
+  if not ok then error(result, 0) end
+  return result
+end
+
+function orders.tick(forceOrderId)
+  return runTick(forceOrderId)
+end
 return orders]====],
   ["/concordos/system/lib/activity.lua"] = [====[-- Persistent, compact activity history for ConcordOS.
 local activity = {}

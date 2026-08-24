@@ -331,7 +331,12 @@ local function persistentRequest()
     sayLine("Отменено.") pause() return
   end
 
-  local order = orders.create(address, item, count)
+  local order, createErr = orders.create(address, item, count)
+  if not order then
+    sayLine(tostring(createErr or "Заявка заблокирована"))
+    pause()
+    return
+  end
   local ok, err = pcall(orders.tick, order.id)
   if not ok then
     sayLine("Заявка сохранена, но первая отправка не удалась: " .. tostring(err))
@@ -353,7 +358,6 @@ local function showOrders()
   native.setTextColor(colors.red)
   sayLine("Постоянные заявки")
   native.setTextColor(colors.white)
-  pcall(orders.tick)
   local data = orders.load()
   if #data.orders == 0 then sayLine("Заявок ещё нет.") pause() return end
   local first = math.max(1, #data.orders - 5)

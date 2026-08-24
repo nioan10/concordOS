@@ -21,6 +21,8 @@ local confirmation = false
 local statusText, statusColor = "Готово к работе", colors.lightGray
 local refreshTimer = nil
 local producedItems = {}
+local selectedGroupId, groupDetailPage = nil, 0
+local GROUP_DETAIL_PAGE_SIZE = 3 -- positions per page
 
 local tabs = {
   { id = "order", label = "Заказать" },
@@ -135,7 +137,7 @@ local function drawHeader(width)
   local tabWidth = math.max(10, math.floor(width / #tabs))
   for index, tab in ipairs(tabs) do
     local x = 1 + (index - 1) * tabWidth
-    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id)
+    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or (page == 'group' and tab.id == 'orders'))
   end
 end
 
@@ -301,6 +303,19 @@ local function progressBar(progress)
   return "[" .. string.rep("#", filled) .. string.rep("-", 8 - filled) .. "] " .. formatQuantity(accepted) .. "/" .. formatQuantity(requested)
 end
 
+local function orderStateLabel(order)
+  if order.state == 'active' then return 'ожидание' end
+  if order.state == 'accepted' then return 'готово' end
+  if order.state == 'cancelled' then return 'отмена' end
+  return tostring(order.state or '?')
+end
+
+local function orderStateColor(order)
+  if order.state == 'accepted' then return colors.lime end
+  if order.state == 'cancelled' then return colors.red end
+  return colors.orange
+end
+
 local function drawOrders(width)
   local groups = orders.groups()
   if #groups > 0 then
@@ -311,7 +326,8 @@ local function drawOrders(width)
       local progress = orders.groupProgress(group.id)
       local state = progress.state == "active" and "в работе" or (progress.state == "accepted" and "готово" or "отмена")
       ui.line(output, 2, row, width - 3, "Стройка №" .. tostring(group.id) .. " [" .. state .. "] " .. ru.fit(group.title, width - 22, ""), colors.white, colors.gray)
-      ui.line(output, 2, row + 1, width - 11, progressBar(progress), colors.lightGray, colors.black)
+      ui.line(output, 2, row + 1, width - 16, progressBar(progress), colors.lightGray, colors.black)
+      ui.button(output, width - 14, row + 1, 6, 1, 'Состав', colors.white, colors.purple, false)
       ui.button(output, width - 8, row + 1, 3, 1, "R", colors.white, colors.blue, false)
       ui.button(output, width - 4, row + 1, 3, 1, "X", colors.white, colors.red, false)
       ui.line(output, 2, row + 2, width - 3, ru.fit("-> " .. tostring(group.address), width - 3, ""), colors.lightGray, colors.gray)
@@ -336,6 +352,38 @@ local function drawOrders(width)
     ui.line(output, 2, row + 2, width - 3, ru.fit(tostring(order.lastResult or ""), width - 3, ""), colors.lightGray, colors.gray)
     row = row + 4
   end
+end
+
+local function drawGroupDetails(width, height)
+  local group = orders.getGroup(selectedGroupId)
+  if not group then
+    ui.text(output, 2, 6, 'Заказ стройки не найден.', colors.red, colors.gray)
+    return
+  end
+  local progress = orders.groupProgress(group.id)
+  local entries = orders.groupOrders(group.id)
+  local pages = math.max(1, math.ceil(#entries / GROUP_DETAIL_PAGE_SIZE))
+  if groupDetailPage >= pages then groupDetailPage = pages - 1 end
+  ui.button(output, 2, 5, 11, 1, '< Назад', colors.white, colors.blue, false)
+  ui.text(output, 14, 5, ru.fit('Стройка №' .. tostring(group.id) .. ': ' .. tostring(group.title or ''), width - 15, ''), colors.white, colors.gray)
+  ui.line(output, 2, 6, width - 3, 'Адрес: ' .. tostring(group.address or ''), colors.lightGray, colors.gray)
+  ui.line(output, 2, 7, width - 3, 'Общий прогресс: ' .. progressBar(progress), colors.lightGray, colors.black)
+
+  local first = groupDetailPage * GROUP_DETAIL_PAGE_SIZE + 1
+  for offset = 0, GROUP_DETAIL_PAGE_SIZE - 1 do
+    local order = entries[first + offset]
+    if order then
+      local row = 9 + offset * 3
+      local title = '№' .. tostring(order.id) .. ' [' .. orderStateLabel(order) .. '] ' .. tostring(order.item)
+      itemLine(row, width, title, order.item, orderStateColor(order), offset % 2 == 0 and colors.gray or colors.black)
+      ui.line(output, 2, row + 1, width - 3, orderBar(order), colors.lightGray, colors.black)
+      ui.line(output, 2, row + 2, width - 3, ru.fit(tostring(order.lastResult or 'Ожидание'), width - 3, ''), colors.lightGray, colors.gray)
+    end
+  end
+  if #entries == 0 then ui.text(output, 2, 10, 'Внутри заказа пока нет позиций.', colors.lightGray, colors.gray) end
+  local leftWidth = math.floor((width - 3) / 2)
+  ui.button(output, 2, height - 1, leftWidth, 1, '< Пред.', colors.white, colors.gray, groupDetailPage > 0)
+  ui.button(output, 3 + leftWidth, height - 1, width - 3 - leftWidth, 1, 'След. >', colors.white, colors.gray, groupDetailPage < pages - 1)
 end
 
 local function drawNetwork(width)
@@ -367,7 +415,8 @@ local function draw()
   local width, height = output.getSize()
   ui.clear(output, colors.gray)
   drawHeader(width)
-  if confirmation then drawConfirmation(width)
+  if page == 'group' then drawGroupDetails(width, height)
+  elseif confirmation then drawConfirmation(width)
   elseif page == "order" then drawOrder(width)
   elseif page == "build" then drawBuildOrder(width)
   elseif page == "addresses" then drawAddresses(width)
@@ -447,6 +496,7 @@ local function activateTab(index)
   local tab = tabs[index]
   if tab then
     page, confirmation = tab.id, false
+    if page == 'orders' then selectedGroupId, groupDetailPage = nil, 0 end
     activeField = page == "stock" and "search" or "address"
     if page == "stock" then loadCatalog() end
   end
@@ -465,7 +515,9 @@ while true do
   elseif event == "char" or event == "paste" then
     if not confirmation then appendText(a) draw() end
   elseif event == "key" then
-    if a == keys.escape then return end
+    if a == keys.escape then
+      if page == 'group' then page, selectedGroupId, groupDetailPage, activeField = 'orders', nil, 0, nil else return end
+    end
     if a == keys.tab and not confirmation then
       if page == "order" then
         activeField = activeField == "address" and "item" or (activeField == "item" and "amount" or "address")
@@ -592,7 +644,11 @@ while true do
           for index = first, #groups do
             local row = 5 + (index - first) * 4
             local group = groups[index]
-            if y == row + 1 and x >= width - 8 and x <= width - 6 then
+            if y == row or y == row + 2 then
+              page, selectedGroupId, groupDetailPage, activeField = 'group', group.id, 0, nil
+            elseif y == row + 1 and x >= width - 14 and x < width - 8 then
+              page, selectedGroupId, groupDetailPage, activeField = 'group', group.id, 0, nil
+            elseif y == row + 1 and x >= width - 8 and x <= width - 6 then
               if orders.retryGroup(group.id) then pcall(orders.tick) setStatus("Повтор стройки отправлен", colors.lime) end
             elseif y == row + 1 and x >= width - 4 then
               if orders.cancelGroup(group.id) then setStatus("Заказ стройки отменён", colors.orange) end
@@ -608,6 +664,19 @@ while true do
             elseif y == row + 1 and x >= width - 4 then
               if orders.cancel(order.id) then setStatus("Заявка отменена", colors.orange) end
             end
+          end
+        end
+      elseif page == 'group' then
+        if y == 5 and x < 13 then
+          page, selectedGroupId, groupDetailPage, activeField = 'orders', nil, 0, nil
+        elseif y == height - 1 then
+          local groupEntries = orders.groupOrders(selectedGroupId)
+          local totalPages = math.max(1, math.ceil(#groupEntries / GROUP_DETAIL_PAGE_SIZE))
+          local leftWidth = math.floor((width - 3) / 2)
+          if x < 3 + leftWidth then
+            groupDetailPage = math.max(0, groupDetailPage - 1)
+          else
+            groupDetailPage = math.min(totalPages - 1, groupDetailPage + 1)
           end
         end
       end

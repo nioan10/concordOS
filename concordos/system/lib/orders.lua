@@ -147,6 +147,27 @@ function orders.groups()
   return orders.load().groups
 end
 
+function orders.getGroup(groupId)
+  for _, group in ipairs(orders.load().groups) do
+    if group.id == tonumber(groupId) then return group end
+  end
+end
+
+-- Individual persistent requests created from one construction order.
+function orders.groupOrders(groupId)
+  local result = {}
+  for _, order in ipairs(orders.load().orders) do
+    if order.groupId == tonumber(groupId) then result[#result + 1] = order end
+  end
+  table.sort(result, function(a, b)
+    local aRank = a.state == 'active' and 0 or (a.state == 'cancelled' and 1 or 2)
+    local bRank = b.state == 'active' and 0 or (b.state == 'cancelled' and 1 or 2)
+    if aRank ~= bRank then return aRank < bRank end
+    return tostring(a.item) < tostring(b.item)
+  end)
+  return result
+end
+
 function orders.groupProgress(groupId)
   local requested, accepted, active, cancelled = 0, 0, 0, 0
   for _, order in ipairs(orders.load().orders) do

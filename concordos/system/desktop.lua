@@ -94,7 +94,7 @@ local function appPosition(output, slot)
 end
 
 local function drawAppCard(output, x, y, width, height, app, active, shortcut)
-  local background = active and colors.gray or colors.black
+  local background = active and colors.blue or colors.black
   local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
   ui.fill(output, x, y, 1, height, accent)
@@ -103,7 +103,7 @@ local function drawAppCard(output, x, y, width, height, app, active, shortcut)
   if height > 1 then
     ui.text(output, x + 2, y + 1, ru.fit(app.subtitle, width - 3), colors.lightGray, background)
   end
-  if height > 2 then ui.text(output, x + 2, y + 2, 'Enter или клик — открыть', accent, background) end
+  if height > 2 then ui.line(output, x + 2, y + 2, width - 3, 'Enter или клик — открыть', accent, background) end
 end
 
 local function backButton(output)

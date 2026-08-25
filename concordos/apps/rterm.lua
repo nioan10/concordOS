@@ -2,6 +2,7 @@
 local ROOT = "/concordos"
 local ru = dofile(ROOT .. "/system/lib/ru.lua")
 local native = term.current()
+local commandHistory = {}
 
 local function newline()
   local width, height = native.getSize()
@@ -42,12 +43,13 @@ end
 
 local function readUtf8(prompt)
   local line, cursor = "", 1
+  local historyIndex, historyDraft = #commandHistory + 1, ""
   local startX, startY = native.getCursorPos()
   local width = native.getSize()
   local promptLength = ru.len(prompt)
 
   local function redraw()
-    local available = math.max(1, width - promptLength)
+    local available = math.max(1, width - startX + 1 - promptLength)
     local first = math.max(1, cursor - available + 1)
     local visible = ru.sub(line, first, first + available - 1)
     native.setCursorPos(startX, startY)
@@ -64,6 +66,7 @@ local function readUtf8(prompt)
       local after = ru.sub(line, cursor)
       line = before .. a .. after
       cursor = cursor + ru.len(a)
+      historyIndex, historyDraft = #commandHistory + 1, line
       redraw()
     elseif event == "key" then
       if a == keys.enter then
@@ -78,11 +81,21 @@ local function readUtf8(prompt)
         cursor = 1
       elseif a == keys['end'] then
         cursor = ru.len(line) + 1
+      elseif a == keys.up and #commandHistory > 0 then
+        if historyIndex > #commandHistory then historyDraft = line end
+        historyIndex = math.max(1, historyIndex - 1)
+        line, cursor = commandHistory[historyIndex] or "", ru.len(commandHistory[historyIndex] or "") + 1
+      elseif a == keys.down and #commandHistory > 0 then
+        historyIndex = math.min(#commandHistory + 1, historyIndex + 1)
+        line = historyIndex <= #commandHistory and (commandHistory[historyIndex] or "") or historyDraft
+        cursor = ru.len(line) + 1
       elseif a == keys.backspace and cursor > 1 then
         line = ru.sub(line, 1, cursor - 2) .. ru.sub(line, cursor)
         cursor = cursor - 1
+        historyIndex, historyDraft = #commandHistory + 1, line
       elseif a == keys.delete and cursor <= ru.len(line) then
         line = ru.sub(line, 1, cursor - 1) .. ru.sub(line, cursor + 1)
+        historyIndex, historyDraft = #commandHistory + 1, line
       elseif a == keys.u and (keys.isCtrlDown and keys.isCtrlDown()) then
         line, cursor = "", 1
       end
@@ -141,12 +154,16 @@ native.setCursorPos(1, 1)
 native.setTextColor(colors.lightBlue)
 sayLine("ConcordOS: русский терминал")
 native.setTextColor(colors.lightGray)
-sayLine("help — справка, exit — рабочий стол.")
+sayLine("help — справка, ↑/↓ — история, exit — рабочий стол.")
 native.setTextColor(colors.white)
 
 while true do
   local commandLine = readUtf8("Фесолоник> ")
   if not commandLine then return end
+  if trim(commandLine) ~= "" and commandHistory[#commandHistory] ~= commandLine then
+    commandHistory[#commandHistory + 1] = commandLine
+    if #commandHistory > 50 then table.remove(commandHistory, 1) end
+  end
   local parts = split(trim(commandLine))
   local command = ru.lower(parts[1] or "")
 

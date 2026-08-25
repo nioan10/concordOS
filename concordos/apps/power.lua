@@ -37,6 +37,12 @@ local function homeButton(target)
   return width - buttonWidth + 1, buttonWidth, buttonWidth == 3 and "<" or "< Главная"
 end
 
+local function reconnectButton(target)
+  local width = target.getSize()
+  local buttonWidth = width >= 40 and 17 or 6
+  return width - buttonWidth + 1, buttonWidth, buttonWidth == 6 and "F5" or "Переподключить"
+end
+
 local function percent()
   if not lastMessage or type(lastMessage.lines) ~= "table" then return nil end
   local joined = table.concat(lastMessage.lines, " ")
@@ -62,6 +68,9 @@ local function drawTarget(target)
   local homeX, homeWidth, homeLabel = homeButton(target)
   ui.button(target, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
   ui.text(target, homeX, 1, homeLabel, colors.white, colors.lightBlue)
+  local reconnectX, reconnectWidth, reconnectLabel = reconnectButton(target)
+  ui.line(target, 2, 2, reconnectX - 3, modem and ("Радиоканал " .. tostring(CHANNEL) .. " · " .. tostring(modemName or "модем")) or "Радиоканал не подключён", modem and colors.lightGray or colors.red, colors.gray)
+  ui.button(target, reconnectX, 2, reconnectWidth, 1, reconnectLabel, colors.white, colors.blue, false)
 
   if not modem then
     ui.text(target, 2, 5, "Беспроводной модем не найден.", colors.red, colors.gray)
@@ -132,9 +141,18 @@ while true do
   elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
     if clickedHome(target, x, y) then return end
+    local reconnectX, reconnectWidth = reconnectButton(target)
+    if y == 2 and x >= reconnectX and x < reconnectX + reconnectWidth then
+      lastMessage = nil
+      reconnect()
+      draw()
+    end
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
-    if a == keys.f5 then reconnect() end
+    if a == keys.f5 or a == keys.enter then
+      lastMessage = nil
+      reconnect()
+    end
     draw()
   elseif event == "peripheral" or event == "peripheral_detach" then
     reconnect()

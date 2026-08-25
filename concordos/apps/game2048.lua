@@ -155,8 +155,13 @@ local function drawTarget(target)
   ui.button(target, left + 3, buttonY + 1, 3, 1, "<", colors.white, colors.blue, false)
   ui.button(target, left + 7, buttonY + 1, 3, 1, "v", colors.white, colors.blue, false)
   ui.button(target, left + 11, buttonY + 1, 3, 1, ">", colors.white, colors.blue, false)
+  local hasResetButton = height >= buttonY + 7
+  if hasResetButton then
+    ui.button(target, left + 3, buttonY + 3, 11, 1, "Новая игра", colors.white, colors.green, false)
+  end
   local state = won and "2048 собрана! Можно продолжать." or (canMove() and "Сдвигай одинаковые плитки." or "Ходов больше нет. Нажми R.")
-  ui.text(target, 2, math.min(height - 2, buttonY + 3), state, won and colors.lime or colors.lightGray, colors.gray)
+  local stateY = math.min(height - 2, buttonY + (hasResetButton and 5 or 3))
+  ui.line(target, 2, stateY, width - 3, state, won and colors.lime or colors.lightGray, colors.gray)
   ui.line(target, 1, height, width, "Стрелки/WASD или кнопки  R: новая игра  < Главная: выход", colors.black, colors.lightGray)
 end
 
@@ -165,6 +170,7 @@ local function draw()
 end
 
 local function directionAt(target, x, y)
+  local _, height = target.getSize()
   local left, top = geometry(target)
   local buttonY = top + 5
   if y == buttonY and x >= left + 7 and x < left + 10 then return "up" end
@@ -173,6 +179,7 @@ local function directionAt(target, x, y)
     if x >= left + 7 and x < left + 10 then return "down" end
     if x >= left + 11 and x < left + 14 then return "right" end
   end
+  if height >= buttonY + 7 and y == buttonY + 3 and x >= left + 3 and x < left + 14 then return "reset" end
 end
 
 local function clickedHome(target, x, y)
@@ -193,7 +200,8 @@ while true do
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
     if clickedHome(target, x, y) then return end
     local direction = directionAt(target, x, y)
-    if direction then move(direction) draw() end
+    if direction == "reset" then reset() draw()
+    elseif direction then move(direction) draw() end
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
     if a == keys.r then reset()

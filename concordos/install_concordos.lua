@@ -161,6 +161,7 @@ waitForUser()]====],
 local ROOT = "/concordos"
 local ru = dofile(ROOT .. "/system/lib/ru.lua")
 local native = term.current()
+local commandHistory = {}
 
 local function newline()
   local width, height = native.getSize()
@@ -201,12 +202,13 @@ end
 
 local function readUtf8(prompt)
   local line, cursor = "", 1
+  local historyIndex, historyDraft = #commandHistory + 1, ""
   local startX, startY = native.getCursorPos()
   local width = native.getSize()
   local promptLength = ru.len(prompt)
 
   local function redraw()
-    local available = math.max(1, width - promptLength)
+    local available = math.max(1, width - startX + 1 - promptLength)
     local first = math.max(1, cursor - available + 1)
     local visible = ru.sub(line, first, first + available - 1)
     native.setCursorPos(startX, startY)
@@ -223,6 +225,7 @@ local function readUtf8(prompt)
       local after = ru.sub(line, cursor)
       line = before .. a .. after
       cursor = cursor + ru.len(a)
+      historyIndex, historyDraft = #commandHistory + 1, line
       redraw()
     elseif event == "key" then
       if a == keys.enter then
@@ -237,11 +240,21 @@ local function readUtf8(prompt)
         cursor = 1
       elseif a == keys['end'] then
         cursor = ru.len(line) + 1
+      elseif a == keys.up and #commandHistory > 0 then
+        if historyIndex > #commandHistory then historyDraft = line end
+        historyIndex = math.max(1, historyIndex - 1)
+        line, cursor = commandHistory[historyIndex] or "", ru.len(commandHistory[historyIndex] or "") + 1
+      elseif a == keys.down and #commandHistory > 0 then
+        historyIndex = math.min(#commandHistory + 1, historyIndex + 1)
+        line = historyIndex <= #commandHistory and (commandHistory[historyIndex] or "") or historyDraft
+        cursor = ru.len(line) + 1
       elseif a == keys.backspace and cursor > 1 then
         line = ru.sub(line, 1, cursor - 2) .. ru.sub(line, cursor)
         cursor = cursor - 1
+        historyIndex, historyDraft = #commandHistory + 1, line
       elseif a == keys.delete and cursor <= ru.len(line) then
         line = ru.sub(line, 1, cursor - 1) .. ru.sub(line, cursor + 1)
+        historyIndex, historyDraft = #commandHistory + 1, line
       elseif a == keys.u and (keys.isCtrlDown and keys.isCtrlDown()) then
         line, cursor = "", 1
       end
@@ -300,12 +313,16 @@ native.setCursorPos(1, 1)
 native.setTextColor(colors.lightBlue)
 sayLine("ConcordOS: русский терминал")
 native.setTextColor(colors.lightGray)
-sayLine("help — справка, exit — рабочий стол.")
+sayLine("help — справка, ↑/↓ — история, exit — рабочий стол.")
 native.setTextColor(colors.white)
 
 while true do
   local commandLine = readUtf8("Фесолоник> ")
   if not commandLine then return end
+  if trim(commandLine) ~= "" and commandHistory[#commandHistory] ~= commandLine then
+    commandHistory[#commandHistory + 1] = commandLine
+    if #commandHistory > 50 then table.remove(commandHistory, 1) end
+  end
   local parts = split(trim(commandLine))
   local command = ru.lower(parts[1] or "")
 
@@ -1075,10 +1092,11 @@ local function drawHeader(width)
   local homeX, homeWidth, homeLabel = homeButton(width)
   ui.button(output, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
   ui.text(output, homeX, 1, homeLabel, colors.white, colors.lightBlue)
-  local tabWidth = math.max(10, math.floor(width / #tabs))
+  local tabWidth = math.max(1, math.floor(width / #tabs))
   for index, tab in ipairs(tabs) do
     local x = 1 + (index - 1) * tabWidth
-    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or ((page == 'group' or page == 'audit') and tab.id == 'orders'))
+    local size = index == #tabs and width - x + 1 or tabWidth
+    ui.button(output, x, 3, size, 1, tab.label, colors.white, colors.gray, page == tab.id or ((page == 'group' or page == 'audit') and tab.id == 'orders'))
   end
 end
 
@@ -1546,8 +1564,14 @@ local function activateTab(index)
     page, confirmation = tab.id, false
     if page == 'orders' then selectedGroupId, groupDetailPage, auditPage = nil, 0, 0 end
     groupSearchActive = false
-    activeField = page == "stock" and "search" or "address"
-    if page == "stock" then loadCatalog() end
+    if page == "order" or page == "build" then
+      activeField = "address"
+    elseif page == "stock" then
+      activeField = "search"
+      loadCatalog()
+    else
+      activeField = nil
+    end
   end
 end
 
@@ -1588,7 +1612,24 @@ while true do
       elseif page == "build" then submitBuildOrder()
       elseif page == "stock" then loadCatalog()
       end
-    elseif a == keys.f5 then draw()
+    elseif a == keys.f5 then
+      if page == "stock" then
+        loadCatalog()
+      elseif page == "orders" then
+        pcall(orders.tick)
+        setStatus("Заявки обновлены", colors.lime)
+      else
+        refreshProducedItems()
+        setStatus("Данные обновлены", colors.lime)
+      end
+    elseif a == keys.f and page == "orders" and not activeField and not confirmation then
+      groupSearchActive = true
+      setStatus("Поиск по названию или адресу", colors.lightBlue)
+    elseif not activeField and not groupSearchActive and not confirmation then
+      local tabKeys = { keys.one, keys.two, keys.three, keys.four }
+      for index, code in ipairs(tabKeys) do
+        if a == code then activateTab(index) break end
+      end
     end
     draw()
   elseif event == "mouse_click" then
@@ -1603,8 +1644,8 @@ while true do
         if x < split then confirmation = false else submitOrder() end
       end
     elseif y == 3 then
-      local tabWidth = math.max(10, math.floor(width / #tabs))
-      activateTab(math.floor((x - 1) / tabWidth) + 1)
+      local tabWidth = math.max(1, math.floor(width / #tabs))
+      activateTab(math.min(#tabs, math.floor((x - 1) / tabWidth) + 1))
     else
       local field = fieldAt(x, y, width)
       if field then activeField = field
@@ -2252,8 +2293,13 @@ local function drawTarget(target)
   ui.button(target, left + 3, buttonY + 1, 3, 1, "<", colors.white, colors.blue, false)
   ui.button(target, left + 7, buttonY + 1, 3, 1, "v", colors.white, colors.blue, false)
   ui.button(target, left + 11, buttonY + 1, 3, 1, ">", colors.white, colors.blue, false)
+  local hasResetButton = height >= buttonY + 7
+  if hasResetButton then
+    ui.button(target, left + 3, buttonY + 3, 11, 1, "Новая игра", colors.white, colors.green, false)
+  end
   local state = won and "2048 собрана! Можно продолжать." or (canMove() and "Сдвигай одинаковые плитки." or "Ходов больше нет. Нажми R.")
-  ui.text(target, 2, math.min(height - 2, buttonY + 3), state, won and colors.lime or colors.lightGray, colors.gray)
+  local stateY = math.min(height - 2, buttonY + (hasResetButton and 5 or 3))
+  ui.line(target, 2, stateY, width - 3, state, won and colors.lime or colors.lightGray, colors.gray)
   ui.line(target, 1, height, width, "Стрелки/WASD или кнопки  R: новая игра  < Главная: выход", colors.black, colors.lightGray)
 end
 
@@ -2262,6 +2308,7 @@ local function draw()
 end
 
 local function directionAt(target, x, y)
+  local _, height = target.getSize()
   local left, top = geometry(target)
   local buttonY = top + 5
   if y == buttonY and x >= left + 7 and x < left + 10 then return "up" end
@@ -2270,6 +2317,7 @@ local function directionAt(target, x, y)
     if x >= left + 7 and x < left + 10 then return "down" end
     if x >= left + 11 and x < left + 14 then return "right" end
   end
+  if height >= buttonY + 7 and y == buttonY + 3 and x >= left + 3 and x < left + 14 then return "reset" end
 end
 
 local function clickedHome(target, x, y)
@@ -2290,7 +2338,8 @@ while true do
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
     if clickedHome(target, x, y) then return end
     local direction = directionAt(target, x, y)
-    if direction then move(direction) draw() end
+    if direction == "reset" then reset() draw()
+    elseif direction then move(direction) draw() end
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
     if a == keys.r then reset()
@@ -2685,6 +2734,12 @@ local function homeButton(target)
   return width - buttonWidth + 1, buttonWidth, buttonWidth == 3 and "<" or "< Главная"
 end
 
+local function reconnectButton(target)
+  local width = target.getSize()
+  local buttonWidth = width >= 40 and 17 or 6
+  return width - buttonWidth + 1, buttonWidth, buttonWidth == 6 and "F5" or "Переподключить"
+end
+
 local function percent()
   if not lastMessage or type(lastMessage.lines) ~= "table" then return nil end
   local joined = table.concat(lastMessage.lines, " ")
@@ -2710,6 +2765,9 @@ local function drawTarget(target)
   local homeX, homeWidth, homeLabel = homeButton(target)
   ui.button(target, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
   ui.text(target, homeX, 1, homeLabel, colors.white, colors.lightBlue)
+  local reconnectX, reconnectWidth, reconnectLabel = reconnectButton(target)
+  ui.line(target, 2, 2, reconnectX - 3, modem and ("Радиоканал " .. tostring(CHANNEL) .. " · " .. tostring(modemName or "модем")) or "Радиоканал не подключён", modem and colors.lightGray or colors.red, colors.gray)
+  ui.button(target, reconnectX, 2, reconnectWidth, 1, reconnectLabel, colors.white, colors.blue, false)
 
   if not modem then
     ui.text(target, 2, 5, "Беспроводной модем не найден.", colors.red, colors.gray)
@@ -2780,9 +2838,18 @@ while true do
   elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
     if clickedHome(target, x, y) then return end
+    local reconnectX, reconnectWidth = reconnectButton(target)
+    if y == 2 and x >= reconnectX and x < reconnectX + reconnectWidth then
+      lastMessage = nil
+      reconnect()
+      draw()
+    end
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
-    if a == keys.f5 then reconnect() end
+    if a == keys.f5 or a == keys.enter then
+      lastMessage = nil
+      reconnect()
+    end
     draw()
   elseif event == "peripheral" or event == "peripheral_detach" then
     reconnect()
@@ -4618,7 +4685,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.21.0",
+  version = "0.22.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4829,7 +4896,7 @@ local function appPosition(output, slot)
 end
 
 local function drawAppCard(output, x, y, width, height, app, active, shortcut)
-  local background = active and colors.gray or colors.black
+  local background = active and colors.blue or colors.black
   local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
   ui.fill(output, x, y, 1, height, accent)
@@ -4838,7 +4905,7 @@ local function drawAppCard(output, x, y, width, height, app, active, shortcut)
   if height > 1 then
     ui.text(output, x + 2, y + 1, ru.fit(app.subtitle, width - 3), colors.lightGray, background)
   end
-  if height > 2 then ui.text(output, x + 2, y + 2, 'Enter или клик — открыть', accent, background) end
+  if height > 2 then ui.line(output, x + 2, y + 2, width - 3, 'Enter или клик — открыть', accent, background) end
 end
 
 local function backButton(output)
@@ -6089,10 +6156,23 @@ end
 
 function ui.text(target, x, y, value, foreground, background, width)
   local output = target or term
+  local screenWidth, screenHeight = output.getSize()
+  x, y = math.floor(tonumber(x) or 1), math.floor(tonumber(y) or 1)
+  if y < 1 or y > screenHeight or x > screenWidth then return end
+
+  local text = tostring(value or "")
+  if x < 1 then
+    text = ru.sub(text, 2 - x)
+    x = 1
+  end
+  local available = screenWidth - x + 1
+  local drawWidth = width and math.min(available, math.max(0, math.floor(width))) or available
+  if drawWidth <= 0 then return end
+
   if foreground then output.setTextColor(foreground) end
   if background then output.setBackgroundColor(background) end
   output.setCursorPos(x, y)
-  ru.write(output, width and ru.padRight(value, width) or value)
+  ru.write(output, width and ru.padRight(text, drawWidth) or ru.fit(text, drawWidth, ""))
 end
 
 function ui.line(target, x, y, width, value, foreground, background)
@@ -6101,8 +6181,16 @@ end
 
 function ui.fill(target, x, y, width, height, background)
   local output = target or term
+  local screenWidth, screenHeight = output.getSize()
+  x, y = math.floor(tonumber(x) or 1), math.floor(tonumber(y) or 1)
+  width, height = math.floor(tonumber(width) or 0), math.floor(tonumber(height) or 0)
+  if x < 1 then width, x = width + x - 1, 1 end
+  if y < 1 then height, y = height + y - 1, 1 end
+  width = math.min(width, screenWidth - x + 1)
+  height = math.min(height, screenHeight - y + 1)
+  if width <= 0 or height <= 0 then return end
   output.setBackgroundColor(background)
-  local blank = string.rep(" ", math.max(0, width))
+  local blank = string.rep(" ", width)
   for row = y, y + height - 1 do
     output.setCursorPos(x, row)
     output.write(blank)
@@ -6111,7 +6199,12 @@ end
 
 function ui.button(target, x, y, width, height, label, foreground, background, active)
   local output = target or term
-  local bg = active and colors.lightBlue or background
+  -- Grey used to be the default button background. It looked disabled and
+  -- was inconsistent with the blue ConcordOS controls. Keep grey for panels,
+  -- but make every interactive button visibly actionable.
+  local normal = background or colors.blue
+  if normal == colors.gray or normal == colors.lightGray then normal = colors.blue end
+  local bg = active and (normal == colors.blue or normal == colors.black) and colors.lightBlue or normal
   ui.fill(output, x, y, width, height, bg)
   local labelY = y + math.floor((height - 1) / 2)
   ui.text(output, x, labelY, ru.center(label, width), foreground, bg, width)

@@ -141,10 +141,11 @@ local function drawHeader(width)
   local homeX, homeWidth, homeLabel = homeButton(width)
   ui.button(output, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
   ui.text(output, homeX, 1, homeLabel, colors.white, colors.lightBlue)
-  local tabWidth = math.max(10, math.floor(width / #tabs))
+  local tabWidth = math.max(1, math.floor(width / #tabs))
   for index, tab in ipairs(tabs) do
     local x = 1 + (index - 1) * tabWidth
-    ui.button(output, x, 3, tabWidth, 1, tab.label, colors.white, colors.gray, page == tab.id or ((page == 'group' or page == 'audit') and tab.id == 'orders'))
+    local size = index == #tabs and width - x + 1 or tabWidth
+    ui.button(output, x, 3, size, 1, tab.label, colors.white, colors.gray, page == tab.id or ((page == 'group' or page == 'audit') and tab.id == 'orders'))
   end
 end
 
@@ -612,8 +613,14 @@ local function activateTab(index)
     page, confirmation = tab.id, false
     if page == 'orders' then selectedGroupId, groupDetailPage, auditPage = nil, 0, 0 end
     groupSearchActive = false
-    activeField = page == "stock" and "search" or "address"
-    if page == "stock" then loadCatalog() end
+    if page == "order" or page == "build" then
+      activeField = "address"
+    elseif page == "stock" then
+      activeField = "search"
+      loadCatalog()
+    else
+      activeField = nil
+    end
   end
 end
 
@@ -654,7 +661,24 @@ while true do
       elseif page == "build" then submitBuildOrder()
       elseif page == "stock" then loadCatalog()
       end
-    elseif a == keys.f5 then draw()
+    elseif a == keys.f5 then
+      if page == "stock" then
+        loadCatalog()
+      elseif page == "orders" then
+        pcall(orders.tick)
+        setStatus("Заявки обновлены", colors.lime)
+      else
+        refreshProducedItems()
+        setStatus("Данные обновлены", colors.lime)
+      end
+    elseif a == keys.f and page == "orders" and not activeField and not confirmation then
+      groupSearchActive = true
+      setStatus("Поиск по названию или адресу", colors.lightBlue)
+    elseif not activeField and not groupSearchActive and not confirmation then
+      local tabKeys = { keys.one, keys.two, keys.three, keys.four }
+      for index, code in ipairs(tabKeys) do
+        if a == code then activateTab(index) break end
+      end
     end
     draw()
   elseif event == "mouse_click" then
@@ -669,8 +693,8 @@ while true do
         if x < split then confirmation = false else submitOrder() end
       end
     elseif y == 3 then
-      local tabWidth = math.max(10, math.floor(width / #tabs))
-      activateTab(math.floor((x - 1) / tabWidth) + 1)
+      local tabWidth = math.max(1, math.floor(width / #tabs))
+      activateTab(math.min(#tabs, math.floor((x - 1) / tabWidth) + 1))
     else
       local field = fieldAt(x, y, width)
       if field then activeField = field

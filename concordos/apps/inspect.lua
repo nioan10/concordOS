@@ -1,6 +1,7 @@
 -- ConcordOS Create and ComputerCraft peripheral inspector.
 local ROOT = "/concordos"
 local ui = dofile(ROOT .. "/system/lib/ui.lua")
+local ru = ui.ru
 local computer = term.current()
 local monitor = peripheral.find("monitor")
 local monitorName = monitor and peripheral.getName(monitor) or nil
@@ -11,11 +12,19 @@ local page = "devices"
 local selected = 1
 local devicePage, methodPage = 0, 0
 local devices = {}
+local deviceFilter, deviceSearch, searchActive = 'all', '', false
 
 local tabs = {
   { id = "devices", label = "Устройства" },
   { id = "methods", label = "Методы" },
   { id = "guide", label = "Интеграция" },
+}
+
+local deviceFilters = {
+  { id = 'all', label = 'Все' },
+  { id = 'create', label = 'Create' },
+  { id = 'bridge', label = 'Bridge' },
+  { id = 'cc', label = 'CC' },
 }
 
 local function typesOf(name)
@@ -62,6 +71,29 @@ local function scan()
   devicePage, methodPage = 0, 0
 end
 
+local function deviceResults()
+  local result = {}
+  local query = ru.lower(tostring(deviceSearch or ''):match('^%s*(.-)%s*$'))
+  for index, device in ipairs(devices) do
+    local filterMatch = deviceFilter == 'all'
+      or (deviceFilter == 'create' and device.group == 'Create')
+      or (deviceFilter == 'bridge' and device.group == 'CC:C Bridge')
+      or (deviceFilter == 'cc' and device.group == 'ComputerCraft')
+    local searchable = ru.lower(device.name .. ' ' .. table.concat(device.types, ' ') .. ' ' .. device.group)
+    if filterMatch and (query == '' or searchable:find(query, 1, true)) then
+      result[#result + 1] = { item = device, index = index }
+    end
+  end
+  return result
+end
+
+local function ensureSelected(list)
+  for _, entry in ipairs(list or deviceResults()) do
+    if entry.index == selected then return end
+  end
+  selected = list and list[1] and list[1].index or 1
+end
+
 local function homeButton(target)
   local width = target.getSize()
   local buttonWidth = width >= 40 and 11 or 3
@@ -98,21 +130,29 @@ end
 
 local function drawDevices(target)
   local width = target.getSize()
-  ui.line(target, 1, 5, width, "Найдено: " .. tostring(#devices) .. "   Клик — открыть методы   F5 — обновить", colors.lightGray, colors.gray)
-  if #devices == 0 then
-    ui.text(target, 2, 7, "Периферий пока нет. Подключи блок, кабель или modem.", colors.white, colors.gray)
+  local results = deviceResults()
+  ensureSelected(results)
+  ui.line(target, 2, 5, width - 3, ru.fit((deviceSearch == '' and 'Поиск устройства или типа' or deviceSearch) .. (searchActive and '|' or ''), width - 3, ''), deviceSearch == '' and colors.lightGray or colors.white, searchActive and colors.blue or colors.black)
+  local buttonWidth = math.floor((width - 2) / #deviceFilters)
+  for index, entry in ipairs(deviceFilters) do
+    local x = 2 + (index - 1) * buttonWidth
+    local size = index == #deviceFilters and width - x - 1 or buttonWidth - 1
+    ui.button(target, x, 6, size, 1, entry.label, colors.white, colors.blue, deviceFilter == entry.id)
+  end
+  ui.line(target, 1, 7, width, 'Найдено: ' .. tostring(#results) .. '/' .. tostring(#devices) .. '  ·  клик/Enter: методы  ·  F5: обновить', colors.lightGray, colors.gray)
+  if #results == 0 then
+    ui.text(target, 2, 9, #devices == 0 and 'Периферий пока нет. Подключи блок, кабель или modem.' or 'По этому поиску и фильтру ничего не найдено.', colors.white, colors.gray)
     return
   end
-  local firstRow, perPage = 6, rowsPerPage(target, 6)
-  local totalPages = math.max(1, math.ceil(#devices / perPage))
+  local firstRow, perPage = 8, rowsPerPage(target, 8)
+  local totalPages = math.max(1, math.ceil(#results / perPage))
   if devicePage >= totalPages then devicePage = totalPages - 1 end
   local first = devicePage * perPage + 1
   for offset = 0, perPage - 1 do
-    local index = first + offset
-    local item = devices[index]
-    if item then
-      local active = index == selected
-      local label = "[" .. item.group .. "] " .. item.name .. "  ·  " .. table.concat(item.types, ", ")
+    local entry = results[first + offset]
+    if entry then
+      local item, active = entry.item, entry.index == selected
+      local label = '[' .. item.group .. '] ' .. item.name .. '  ·  методов: ' .. tostring(#item.methods)
       ui.line(target, 2, firstRow + offset, width - 3, label, active and colors.white or colors.lightGray, active and colors.lightBlue or (offset % 2 == 0 and colors.gray or colors.black))
     end
   end
@@ -220,10 +260,15 @@ local function clickedTab(target, x, y)
 end
 
 local function selectDelta(delta, target)
-  if #devices == 0 then return end
-  selected = math.max(1, math.min(#devices, selected + delta))
-  local perPage = rowsPerPage(target, 6)
-  devicePage = math.floor((selected - 1) / perPage)
+  local results = deviceResults()
+  if #results == 0 then return end
+  ensureSelected(results)
+  local current = 1
+  for index, entry in ipairs(results) do if entry.index == selected then current = index break end end
+  current = math.max(1, math.min(#results, current + delta))
+  selected = results[current].index
+  local perPage = rowsPerPage(target, 8)
+  devicePage = math.floor((current - 1) / perPage)
   methodPage = 0
 end
 
@@ -237,8 +282,8 @@ while true do
   elseif event == "mouse_scroll" then
     local target = computer
     if page == "devices" then
-      local perPage = rowsPerPage(target, 6)
-      local maxPage = math.max(0, math.ceil(#devices / perPage) - 1)
+      local perPage = rowsPerPage(target, 8)
+      local maxPage = math.max(0, math.ceil(#deviceResults() / perPage) - 1)
       devicePage = math.max(0, math.min(maxPage, devicePage + (a > 0 and 1 or -1)))
     else
       methodPage = math.max(0, methodPage + (a > 0 and 1 or -1))
@@ -246,21 +291,39 @@ while true do
     draw()
   elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
+    local width = target.getSize()
     if clickedHome(target, x, y) then return end
     local tab = clickedTab(target, x, y)
     if tab then
-      page, methodPage = tab, 0
+      page, methodPage, searchActive = tab, 0, false
     elseif page == "devices" then
-      local perPage = rowsPerPage(target, 6)
-      local index = devicePage * perPage + y - 5
-      if y >= 6 and devices[index] then
-        selected, page, methodPage = index, "methods", 0
+      if y == 5 then
+        searchActive = true
+      elseif y == 6 then
+        local buttonWidth = math.floor((width - 2) / #deviceFilters)
+        local index = math.min(#deviceFilters, math.max(1, math.floor((x - 2) / buttonWidth) + 1))
+        deviceFilter, devicePage, searchActive = deviceFilters[index].id, 0, false
+      elseif y >= 8 then
+        local perPage = rowsPerPage(target, 8)
+        local entry = deviceResults()[devicePage * perPage + y - 7]
+        if entry then
+          selected, page, methodPage, searchActive = entry.index, "methods", 0, false
+        end
       end
+    end
+    draw()
+  elseif event == "char" or event == "paste" then
+    if page == 'devices' and searchActive then
+      deviceSearch, devicePage = deviceSearch .. tostring(a), 0
     end
     draw()
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
     if a == keys.f5 then scan()
+    elseif a == keys.f and page == 'devices' then searchActive = true
+    elseif a == keys.backspace and page == 'devices' and searchActive then
+      deviceSearch = ru.sub(deviceSearch, 1, ru.len(deviceSearch) - 1)
+      devicePage = 0
     elseif a == keys.one then page, methodPage = "devices", 0
     elseif a == keys.two then page, methodPage = "methods", 0
     elseif a == keys.three then page, methodPage = "guide", 0

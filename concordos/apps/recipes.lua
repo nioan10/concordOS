@@ -22,7 +22,7 @@ local tagSelectMode, tagSelected = false, {}
 local tagInput, tagTargets, tagReturnScreen = "", {}, "list"
 local recipeLogPage = 0
 -- Dense catalog layout deliberately fits a normal 51×19 computer.
-local PAGE_SIZE = 10
+local PAGE_SIZE = 11
 local shiftHeld, metaHeld = false, false
 local russianInput = true
 
@@ -359,6 +359,11 @@ end
 local function drawList(width, height)
   header(width, "Реестр рецептов")
   local recipes = filteredRecipes()
+  local total, tagged = 0, 0
+  for _, recipe in ipairs(registry.list()) do
+    total = total + 1
+    if #(recipe.tags or {}) > 0 then tagged = tagged + 1 end
+  end
   ui.text(output, 2, 3, "Поиск: название, ID результата или тег", colors.lightGray, colors.gray)
   ui.line(output, 2, 4, width - 3, ru.fit(recipeSearch .. (searchActive and "|" or ""), width - 3, ""), colors.white, searchActive and colors.blue or colors.black)
   ui.button(output, 2, 5, 10, 1, "+ Новый", colors.white, colors.green, false)
@@ -366,6 +371,7 @@ local function drawList(width, height)
   local selectedTags = #selectedTagIds()
   ui.button(output, 27, 5, 12, 1, "Теги: " .. tostring(selectedTags), colors.white, colors.purple, selectedTags > 0)
   ui.button(output, 40, 5, width - 40, 1, "Лог", colors.white, colors.lightBlue, false)
+  ui.line(output, 2, 6, width - 3, 'Рецептов: ' .. tostring(total) .. '  ·  найдено: ' .. tostring(#recipes) .. '  ·  с тегами: ' .. tostring(tagged), colors.lightGray, colors.gray)
   if #recipes == 0 then
     ui.text(output, 2, 8, recipeSearch == "" and "Пока нет рецептов. Начни, например, с рельс." or "Поиск ничего не нашёл.", colors.white, colors.gray)
   else
@@ -636,6 +642,7 @@ while true do
         local recipe = filteredRecipes()[selected]
         if recipe and tagSelectMode then tagSelected[recipe.id] = not tagSelected[recipe.id] else openSelected() end
       elseif a == keys.n then resetForm() screen = "edit"
+      elseif a == keys.f then searchActive = true
       elseif a == keys.p then local recipe = filteredRecipes()[selected] if recipe then makePlan(recipe) end
       elseif a == keys.t then tagSelectMode = not tagSelectMode if not tagSelectMode then tagSelected = {} end
       elseif a == keys.g then openTags(selectedTagIds(), "list")

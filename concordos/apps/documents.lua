@@ -486,7 +486,7 @@ end
 local function drawFiles(target)
   local width = target.getSize()
   drawHeader(target, "Документы")
-  ui.line(target, 1, 3, width, "Файловый менеджер текстов  ·  " .. DOC_ROOT, colors.lightGray, colors.gray)
+  ui.line(target, 1, 3, width, 'Текстовые документы: ' .. tostring(#entries) .. '  ·  ' .. DOC_ROOT, colors.lightGray, colors.gray)
   local part = math.floor((width - 3) / 4)
   ui.button(target, 2, 4, part, 1, "Новый", colors.white, colors.green, false)
   ui.button(target, 3 + part, 4, part, 1, "Открыть", colors.white, colors.blue, false)
@@ -508,7 +508,7 @@ local function drawFiles(target)
     end
   end
   local _, height = target.getSize()
-  ui.line(target, 1, height, width, "Перетащи UTF-8 .txt в окно: импорт  ·  Стр. " .. tostring(filePage + 1) .. "/" .. tostring(totalPages), colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, 'F2: новый  F3: имя  Del: удалить  F5: обновить  ·  Стр. ' .. tostring(filePage + 1) .. '/' .. tostring(totalPages), colors.black, colors.lightGray)
 end
 
 local function drawEditor(target)
@@ -730,6 +730,9 @@ while true do
   elseif event == "key" then
     if screen == "files" then
       if a == keys.f2 then startPrompt("Название нового документа", "", createDocument)
+      elseif a == keys.f5 then
+        scanFiles()
+        setStatus('Список документов обновлён', colors.lime)
       elseif a == keys.enter and entries[selected] then openDocument(entries[selected])
       elseif a == keys.up then selected = math.max(1, selected - 1)
       elseif a == keys.down then selected = math.min(#entries, selected + 1)

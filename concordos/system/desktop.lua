@@ -41,7 +41,7 @@ local function appList()
   if selected > #visible then selected = math.max(1, #visible) end
 end
 
-local SIDEBAR_WIDTH = 12
+local SIDEBAR_WIDTH = 14
 
 local function usesDashboard(output)
   local width, height = output.getSize()
@@ -57,7 +57,7 @@ local function appGeometry(output)
     local contentWidth = width - SIDEBAR_WIDTH - 2
     local tileWidth = math.floor((contentWidth - 1) / 2)
     local featured = section == 'main' and visible[1] and visible[1].featured
-    local firstY = featured and 8 or 4
+    local firstY = featured and 10 or 5
     local rows = featured and 3 or 4
     local capacity = featured and (1 + rows * 2) or rows * 2
     return width, height, tileWidth, rows, capacity, firstY, 3, 2, false, false, 2
@@ -81,7 +81,7 @@ local function appPosition(output, slot)
   local featured = section == 'main' and visible[1] and visible[1].featured
   if dashboard then
     local contentX, contentWidth = SIDEBAR_WIDTH + 2, width - SIDEBAR_WIDTH - 2
-    if featured and slot == 0 then return contentX, 4, contentWidth, 2 end
+    if featured and slot == 0 then return contentX, 5, contentWidth, 3 end
     local relative = featured and slot - 1 or slot
     return contentX + (relative % 2) * (tileWidth + 1), firstY + math.floor(relative / 2) * step, tileWidth, tileHeight
   end
@@ -93,15 +93,17 @@ local function appPosition(output, slot)
   return 2 + column * (tileWidth + 1), firstY + row * step, tileWidth, tileHeight
 end
 
-local function drawAppCard(output, x, y, width, height, app, active)
-  local background = colors.black
+local function drawAppCard(output, x, y, width, height, app, active, shortcut)
+  local background = active and colors.gray or colors.black
   local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
   ui.fill(output, x, y, 1, height, accent)
-  ui.text(output, x + 2, y, ru.fit(app.title, width - 3), colors.white, background)
+  ui.text(output, x + 2, y, ru.fit(app.title, width - 7), colors.white, background)
+  if shortcut then ui.text(output, x + width - 3, y, '[' .. tostring(shortcut) .. ']', colors.lightGray, background) end
   if height > 1 then
     ui.text(output, x + 2, y + 1, ru.fit(app.subtitle, width - 3), colors.lightGray, background)
   end
+  if height > 2 then ui.text(output, x + 2, y + 2, 'Enter или клик — открыть', accent, background) end
 end
 
 local function backButton(output)
@@ -125,43 +127,69 @@ end
 
 local function sidebarSectionAt(x, y)
   if x > SIDEBAR_WIDTH then return nil end
-  if y == 4 then return 'main' end
-  if y == 6 then return 'tools' end
-  if y == 8 then return 'games' end
+  if y == 5 then return 'main' end
+  if y == 7 then return 'tools' end
+  if y == 9 then return 'games' end
 end
 
-local function drawSidebar(output, height)
+local function systemSnapshot()
+  local snapshot = { ticker = peripheral.find('Create_StockTicker') ~= nil, activeGroups = 0, partialGroups = 0, standaloneActive = 0 }
+  local ok, api = pcall(dofile, ROOT .. '/system/lib/orders.lua')
+  if ok and api and api.overview then
+    local overviewOk, overview = pcall(api.overview)
+    if overviewOk and type(overview) == 'table' then
+      snapshot.activeGroups = tonumber(overview.activeGroups) or 0
+      snapshot.partialGroups = tonumber(overview.partialGroups) or 0
+      snapshot.standaloneActive = tonumber(overview.standaloneActive) or 0
+    end
+  end
+  return snapshot
+end
+
+local function drawSidebar(output, height, snapshot)
   ui.fill(output, 1, 2, SIDEBAR_WIDTH, height - 2, colors.black)
-  ui.line(output, 2, 2, SIDEBAR_WIDTH - 2, 'РАЗДЕЛЫ', colors.lightGray, colors.black)
+  ui.line(output, 2, 2, SIDEBAR_WIDTH - 2, 'CONCORDOS', colors.white, colors.black)
+  ui.line(output, 2, 3, SIDEBAR_WIDTH - 2, 'НАВИГАЦИЯ', colors.lightGray, colors.black)
   local entries = {
-    { id = 'main', label = 'Пульт', y = 4 },
-    { id = 'tools', label = 'Сервисы', y = 6 },
-    { id = 'games', label = 'Игры', y = 8 },
+    { id = 'main', label = 'Пульт', y = 5 },
+    { id = 'tools', label = 'Сервисы', y = 7 },
+    { id = 'games', label = 'Игры', y = 9 },
   }
   for _, entry in ipairs(entries) do
     local active = section == entry.id
     local background = active and colors.blue or colors.black
     ui.line(output, 2, entry.y, SIDEBAR_WIDTH - 2, (active and '> ' or '  ') .. entry.label, colors.white, background)
   end
-  ui.line(output, 2, 10, SIDEBAR_WIDTH - 2, string.rep('-', SIDEBAR_WIDTH - 2), colors.darkGray, colors.black)
-  ui.text(output, 2, 12, 'v' .. config.version, colors.lightGray, colors.black)
+  ui.line(output, 2, 11, SIDEBAR_WIDTH - 2, string.rep('-', SIDEBAR_WIDTH - 2), colors.darkGray, colors.black)
+  if height >= 18 then
+    ui.text(output, 2, 13, snapshot.ticker and 'CREATE: ON' or 'CREATE: ---', snapshot.ticker and colors.lime or colors.red, colors.black)
+    local orderText = snapshot.partialGroups > 0 and ('ЧАСТЬ: ' .. tostring(snapshot.partialGroups)) or ('РАБОТА: ' .. tostring(snapshot.activeGroups))
+    ui.text(output, 2, 14, orderText, snapshot.partialGroups > 0 and colors.orange or colors.lightGray, colors.black)
+  end
+  ui.text(output, 2, height - 3, 'Tab: раздел', colors.lightGray, colors.black)
   ui.text(output, 2, height - 2, 'R: reboot', colors.lightGray, colors.black)
+  ui.text(output, 2, height - 1, 'v' .. config.version, colors.lightGray, colors.black)
 end
 
-local function drawDashboard(output, isMonitor, perPage)
+local function drawDashboard(output, isMonitor, perPage, snapshot)
   local width, height = output.getSize()
   local contentX, contentWidth = SIDEBAR_WIDTH + 2, width - SIDEBAR_WIDTH - 2
   local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
   ui.clear(output, colors.gray)
-  ui.line(output, 1, 1, width, config.name .. ' / ' .. config.country, colors.white, colors.blue)
-  drawSidebar(output, height)
-  ui.text(output, contentX, 2, sectionTitle(), colors.white, colors.gray)
-  ui.text(output, contentX, 3, ru.fit('Программ: ' .. tostring(#visible), contentWidth, ''), colors.lightGray, colors.gray)
+  ui.line(output, 1, 1, width, config.name .. '  /  ' .. config.country, colors.white, colors.blue)
+  drawSidebar(output, height, snapshot)
 
   if section == 'main' then
-    ui.line(output, contentX, 7, contentWidth, 'ОСНОВНЫЕ ПРОГРАММЫ', colors.lightGray, colors.gray)
+    ui.text(output, contentX, 2, 'Центр управления', colors.white, colors.gray)
+    ui.text(output, contentX, 3, 'Конкордат Фессалоник · промышленная сеть', colors.lightGray, colors.gray)
+    local network = snapshot.ticker and 'Create подключён' or 'Create не найден'
+    local ordersText = snapshot.partialGroups > 0 and ('частичных: ' .. tostring(snapshot.partialGroups)) or ('в работе: ' .. tostring(snapshot.activeGroups))
+    ui.line(output, contentX, 4, contentWidth, network .. '  ·  стройзаказов ' .. ordersText .. '  ·  обычных: ' .. tostring(snapshot.standaloneActive), snapshot.partialGroups > 0 and colors.orange or (snapshot.ticker and colors.lime or colors.red), colors.gray)
+    ui.line(output, contentX, 9, contentWidth, 'ОСНОВНЫЕ СИСТЕМЫ', colors.lightGray, colors.gray)
   else
-    ui.line(output, contentX, 3, contentWidth, ru.fit('Программ: ' .. tostring(#visible) .. '  |  v' .. config.version, contentWidth, ''), colors.lightGray, colors.gray)
+    ui.text(output, contentX, 2, sectionTitle(), colors.white, colors.gray)
+    ui.line(output, contentX, 3, contentWidth, ru.fit('Программ: ' .. tostring(#visible) .. '  ·  Tab: раздел  ·  Home: пульт', contentWidth, ''), colors.lightGray, colors.gray)
+    ui.line(output, contentX, 4, contentWidth, snapshot.ticker and 'Create: подключён' or 'Create: нет Stock Ticker', snapshot.ticker and colors.lime or colors.red, colors.gray)
   end
   if #visible == 0 then ui.text(output, contentX, 5, 'Приложения пока не найдены.', colors.white, colors.gray) end
 
@@ -171,22 +199,22 @@ local function drawDashboard(output, isMonitor, perPage)
     local app = visible[index]
     if app then
       local x, y, cardWidth, cardHeight = appPosition(output, slot)
-      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected)
+      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected, slot + 1)
     end
   end
 
   local controls
   if section == 'main' then
-    controls = isMonitor and 'Клик: открыть' or 'Колесо: листать  Enter: открыть  Q: терминал'
+    controls = isMonitor and 'Клик: открыть  1–9: быстрый запуск' or '1–9: запуск  Колесо: листать  Enter: открыть  Q: терминал'
   else
-    controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
+    controls = isMonitor and 'Клик: открыть  Q: назад' or '1–9: запуск  Колесо: листать  Enter: открыть  Q: назад'
   end
   ui.line(output, 1, height, width, 'Стр. ' .. tostring(page + 1) .. '/' .. tostring(maxPage + 1) .. '  ' .. controls, colors.black, colors.lightGray)
 end
 
-local function drawOutput(output, isMonitor, perPage)
+local function drawOutput(output, isMonitor, perPage, snapshot)
   if usesDashboard(output) then
-    drawDashboard(output, isMonitor, perPage)
+    drawDashboard(output, isMonitor, perPage, snapshot)
     return
   end
 
@@ -209,7 +237,7 @@ local function drawOutput(output, isMonitor, perPage)
     local app = visible[index]
     if app then
       local x, y, cardWidth, cardHeight = appPosition(output, slot)
-      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected)
+      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected, slot + 1)
     end
   end
   local controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
@@ -220,8 +248,9 @@ local function draw()
   local perPage = pageCapacity()
   local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
   if page > maxPage then page = maxPage end
+  local snapshot = systemSnapshot()
   for _, output in ipairs(outputs) do
-    drawOutput(output, output == monitor, perPage)
+    drawOutput(output, output == monitor, perPage, snapshot)
   end
 end
 
@@ -262,6 +291,11 @@ end
 local function selectVertical(delta)
   local columns = select(11, appGeometry(computer))
   selectDelta(delta * columns)
+end
+
+local function quickSlot(keyCode)
+  local keysBySlot = { keys.one, keys.two, keys.three, keys.four, keys.five, keys.six, keys.seven, keys.eight, keys.nine }
+  for index, code in ipairs(keysBySlot) do if keyCode == code then return index end end
 end
 
 draw()
@@ -309,7 +343,15 @@ while true do
     selected = math.min(#visible, page * perPage + 1)
     draw()
   elseif event == "key" then
-    if a == keys.enter then
+    local slot = quickSlot(a)
+    if slot and slot <= pageCapacity() then
+      local index = page * pageCapacity() + slot
+      if visible[index] then
+        selected = index
+        launch(index)
+        draw()
+      end
+    elseif a == keys.enter then
       launch(selected)
       draw()
     elseif a == keys.left then selectDelta(-1) draw()
@@ -317,6 +359,19 @@ while true do
     elseif a == keys.up then selectVertical(-1) draw()
     elseif a == keys.down then selectVertical(1) draw()
     elseif a == keys.f5 then draw()
+    elseif a == keys.tab then
+      local sections = { 'main', 'tools', 'games' }
+      local current = 1
+      for index, id in ipairs(sections) do if section == id then current = index break end end
+      section = sections[current % #sections + 1]
+      selected, page = 1, 0
+      draw()
+    elseif a == keys.home then
+      section, selected, page = 'main', 1, 0
+      draw()
+    elseif a == keys.backspace and section ~= 'main' then
+      section, selected, page = parentSection(), 1, 0
+      draw()
     elseif a == keys.q then
       if section ~= "main" then
         section = parentSection()

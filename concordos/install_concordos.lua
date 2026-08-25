@@ -961,6 +961,7 @@ local GROUP_DETAIL_PAGE_SIZE = 3 -- positions per page
 local groupSearch, groupSearchActive = '', false
 local groupFilter, groupListPage = 'all', 0
 local GROUP_LIST_PAGE_SIZE = 3
+local pendingGroupCancelId = nil
 local auditPage = 0
 local AUDIT_PAGE_SIZE = 3
 
@@ -1329,7 +1330,8 @@ local function drawOrders(width, height)
       ui.button(output, width - 16, row + 1, 8, 1, 'Состав', colors.white, colors.purple, false)
       if progress.active > 0 then
         ui.button(output, width - 8, row + 1, 3, 1, 'R', colors.white, colors.blue, false)
-        ui.button(output, width - 4, row + 1, 3, 1, 'X', colors.white, colors.red, false)
+        local confirming = pendingGroupCancelId == group.id
+        ui.button(output, width - 4, row + 1, 3, 1, confirming and 'Да' or 'X', colors.white, confirming and colors.orange or colors.red, confirming)
       else
         ui.text(output, width - 8, row + 1, groupStateLabel(progress), groupStateColor(progress), colors.black)
       end
@@ -1719,13 +1721,21 @@ while true do
             local group = entry.group
             groupSearchActive = false
             if entry.progress.active > 0 and y == row + 1 and x >= width - 8 and x <= width - 6 then
+              pendingGroupCancelId = nil
               if orders.retryGroup(group.id) then
                 pcall(orders.tick)
                 setStatus('Повтор стройки отправлен', colors.lime)
               end
             elseif entry.progress.active > 0 and y == row + 1 and x >= width - 4 then
-              if orders.cancelGroup(group.id) then setStatus('Заказ стройки отменён', colors.orange) end
+              if pendingGroupCancelId == group.id then
+                pendingGroupCancelId = nil
+                if orders.cancelGroup(group.id) then setStatus('Заказ стройки отменён', colors.orange) end
+              else
+                pendingGroupCancelId = group.id
+                setStatus('Нажми «Да» ещё раз для отмены всей стройки', colors.orange)
+              end
             else
+              pendingGroupCancelId = nil
               groupReturnPage = 'orders'
               page, selectedGroupId, groupDetailPage, activeField = 'group', group.id, 0, nil
             end
@@ -2297,6 +2307,7 @@ end]====],
   ["/concordos/apps/inspect.lua"] = [====[-- ConcordOS Create and ComputerCraft peripheral inspector.
 local ROOT = "/concordos"
 local ui = dofile(ROOT .. "/system/lib/ui.lua")
+local ru = ui.ru
 local computer = term.current()
 local monitor = peripheral.find("monitor")
 local monitorName = monitor and peripheral.getName(monitor) or nil
@@ -2307,11 +2318,19 @@ local page = "devices"
 local selected = 1
 local devicePage, methodPage = 0, 0
 local devices = {}
+local deviceFilter, deviceSearch, searchActive = 'all', '', false
 
 local tabs = {
   { id = "devices", label = "Устройства" },
   { id = "methods", label = "Методы" },
   { id = "guide", label = "Интеграция" },
+}
+
+local deviceFilters = {
+  { id = 'all', label = 'Все' },
+  { id = 'create', label = 'Create' },
+  { id = 'bridge', label = 'Bridge' },
+  { id = 'cc', label = 'CC' },
 }
 
 local function typesOf(name)
@@ -2358,6 +2377,29 @@ local function scan()
   devicePage, methodPage = 0, 0
 end
 
+local function deviceResults()
+  local result = {}
+  local query = ru.lower(tostring(deviceSearch or ''):match('^%s*(.-)%s*$'))
+  for index, device in ipairs(devices) do
+    local filterMatch = deviceFilter == 'all'
+      or (deviceFilter == 'create' and device.group == 'Create')
+      or (deviceFilter == 'bridge' and device.group == 'CC:C Bridge')
+      or (deviceFilter == 'cc' and device.group == 'ComputerCraft')
+    local searchable = ru.lower(device.name .. ' ' .. table.concat(device.types, ' ') .. ' ' .. device.group)
+    if filterMatch and (query == '' or searchable:find(query, 1, true)) then
+      result[#result + 1] = { item = device, index = index }
+    end
+  end
+  return result
+end
+
+local function ensureSelected(list)
+  for _, entry in ipairs(list or deviceResults()) do
+    if entry.index == selected then return end
+  end
+  selected = list and list[1] and list[1].index or 1
+end
+
 local function homeButton(target)
   local width = target.getSize()
   local buttonWidth = width >= 40 and 11 or 3
@@ -2394,21 +2436,29 @@ end
 
 local function drawDevices(target)
   local width = target.getSize()
-  ui.line(target, 1, 5, width, "Найдено: " .. tostring(#devices) .. "   Клик — открыть методы   F5 — обновить", colors.lightGray, colors.gray)
-  if #devices == 0 then
-    ui.text(target, 2, 7, "Периферий пока нет. Подключи блок, кабель или modem.", colors.white, colors.gray)
+  local results = deviceResults()
+  ensureSelected(results)
+  ui.line(target, 2, 5, width - 3, ru.fit((deviceSearch == '' and 'Поиск устройства или типа' or deviceSearch) .. (searchActive and '|' or ''), width - 3, ''), deviceSearch == '' and colors.lightGray or colors.white, searchActive and colors.blue or colors.black)
+  local buttonWidth = math.floor((width - 2) / #deviceFilters)
+  for index, entry in ipairs(deviceFilters) do
+    local x = 2 + (index - 1) * buttonWidth
+    local size = index == #deviceFilters and width - x - 1 or buttonWidth - 1
+    ui.button(target, x, 6, size, 1, entry.label, colors.white, colors.blue, deviceFilter == entry.id)
+  end
+  ui.line(target, 1, 7, width, 'Найдено: ' .. tostring(#results) .. '/' .. tostring(#devices) .. '  ·  клик/Enter: методы  ·  F5: обновить', colors.lightGray, colors.gray)
+  if #results == 0 then
+    ui.text(target, 2, 9, #devices == 0 and 'Периферий пока нет. Подключи блок, кабель или modem.' or 'По этому поиску и фильтру ничего не найдено.', colors.white, colors.gray)
     return
   end
-  local firstRow, perPage = 6, rowsPerPage(target, 6)
-  local totalPages = math.max(1, math.ceil(#devices / perPage))
+  local firstRow, perPage = 8, rowsPerPage(target, 8)
+  local totalPages = math.max(1, math.ceil(#results / perPage))
   if devicePage >= totalPages then devicePage = totalPages - 1 end
   local first = devicePage * perPage + 1
   for offset = 0, perPage - 1 do
-    local index = first + offset
-    local item = devices[index]
-    if item then
-      local active = index == selected
-      local label = "[" .. item.group .. "] " .. item.name .. "  ·  " .. table.concat(item.types, ", ")
+    local entry = results[first + offset]
+    if entry then
+      local item, active = entry.item, entry.index == selected
+      local label = '[' .. item.group .. '] ' .. item.name .. '  ·  методов: ' .. tostring(#item.methods)
       ui.line(target, 2, firstRow + offset, width - 3, label, active and colors.white or colors.lightGray, active and colors.lightBlue or (offset % 2 == 0 and colors.gray or colors.black))
     end
   end
@@ -2516,10 +2566,15 @@ local function clickedTab(target, x, y)
 end
 
 local function selectDelta(delta, target)
-  if #devices == 0 then return end
-  selected = math.max(1, math.min(#devices, selected + delta))
-  local perPage = rowsPerPage(target, 6)
-  devicePage = math.floor((selected - 1) / perPage)
+  local results = deviceResults()
+  if #results == 0 then return end
+  ensureSelected(results)
+  local current = 1
+  for index, entry in ipairs(results) do if entry.index == selected then current = index break end end
+  current = math.max(1, math.min(#results, current + delta))
+  selected = results[current].index
+  local perPage = rowsPerPage(target, 8)
+  devicePage = math.floor((current - 1) / perPage)
   methodPage = 0
 end
 
@@ -2533,8 +2588,8 @@ while true do
   elseif event == "mouse_scroll" then
     local target = computer
     if page == "devices" then
-      local perPage = rowsPerPage(target, 6)
-      local maxPage = math.max(0, math.ceil(#devices / perPage) - 1)
+      local perPage = rowsPerPage(target, 8)
+      local maxPage = math.max(0, math.ceil(#deviceResults() / perPage) - 1)
       devicePage = math.max(0, math.min(maxPage, devicePage + (a > 0 and 1 or -1)))
     else
       methodPage = math.max(0, methodPage + (a > 0 and 1 or -1))
@@ -2542,21 +2597,39 @@ while true do
     draw()
   elseif event == "mouse_click" or (event == "monitor_touch" and a == monitorName) then
     local target, x, y = event == "monitor_touch" and monitor or computer, b, c
+    local width = target.getSize()
     if clickedHome(target, x, y) then return end
     local tab = clickedTab(target, x, y)
     if tab then
-      page, methodPage = tab, 0
+      page, methodPage, searchActive = tab, 0, false
     elseif page == "devices" then
-      local perPage = rowsPerPage(target, 6)
-      local index = devicePage * perPage + y - 5
-      if y >= 6 and devices[index] then
-        selected, page, methodPage = index, "methods", 0
+      if y == 5 then
+        searchActive = true
+      elseif y == 6 then
+        local buttonWidth = math.floor((width - 2) / #deviceFilters)
+        local index = math.min(#deviceFilters, math.max(1, math.floor((x - 2) / buttonWidth) + 1))
+        deviceFilter, devicePage, searchActive = deviceFilters[index].id, 0, false
+      elseif y >= 8 then
+        local perPage = rowsPerPage(target, 8)
+        local entry = deviceResults()[devicePage * perPage + y - 7]
+        if entry then
+          selected, page, methodPage, searchActive = entry.index, "methods", 0, false
+        end
       end
+    end
+    draw()
+  elseif event == "char" or event == "paste" then
+    if page == 'devices' and searchActive then
+      deviceSearch, devicePage = deviceSearch .. tostring(a), 0
     end
     draw()
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
     if a == keys.f5 then scan()
+    elseif a == keys.f and page == 'devices' then searchActive = true
+    elseif a == keys.backspace and page == 'devices' and searchActive then
+      deviceSearch = ru.sub(deviceSearch, 1, ru.len(deviceSearch) - 1)
+      devicePage = 0
     elseif a == keys.one then page, methodPage = "devices", 0
     elseif a == keys.two then page, methodPage = "methods", 0
     elseif a == keys.three then page, methodPage = "guide", 0
@@ -3206,7 +3279,7 @@ end
 local function drawFiles(target)
   local width = target.getSize()
   drawHeader(target, "Документы")
-  ui.line(target, 1, 3, width, "Файловый менеджер текстов  ·  " .. DOC_ROOT, colors.lightGray, colors.gray)
+  ui.line(target, 1, 3, width, 'Текстовые документы: ' .. tostring(#entries) .. '  ·  ' .. DOC_ROOT, colors.lightGray, colors.gray)
   local part = math.floor((width - 3) / 4)
   ui.button(target, 2, 4, part, 1, "Новый", colors.white, colors.green, false)
   ui.button(target, 3 + part, 4, part, 1, "Открыть", colors.white, colors.blue, false)
@@ -3228,7 +3301,7 @@ local function drawFiles(target)
     end
   end
   local _, height = target.getSize()
-  ui.line(target, 1, height, width, "Перетащи UTF-8 .txt в окно: импорт  ·  Стр. " .. tostring(filePage + 1) .. "/" .. tostring(totalPages), colors.black, colors.lightGray)
+  ui.line(target, 1, height, width, 'F2: новый  F3: имя  Del: удалить  F5: обновить  ·  Стр. ' .. tostring(filePage + 1) .. '/' .. tostring(totalPages), colors.black, colors.lightGray)
 end
 
 local function drawEditor(target)
@@ -3450,6 +3523,9 @@ while true do
   elseif event == "key" then
     if screen == "files" then
       if a == keys.f2 then startPrompt("Название нового документа", "", createDocument)
+      elseif a == keys.f5 then
+        scanFiles()
+        setStatus('Список документов обновлён', colors.lime)
       elseif a == keys.enter and entries[selected] then openDocument(entries[selected])
       elseif a == keys.up then selected = math.max(1, selected - 1)
       elseif a == keys.down then selected = math.min(#entries, selected + 1)
@@ -3609,7 +3685,7 @@ local activity = dofile(ROOT .. "/system/lib/activity.lua")
 local output = term.current()
 
 local filter, page = "all", 0
-local PAGE_SIZE = 11
+local refreshTimer
 local filters = {
   { id = "all", label = "Все" },
   { id = "orders", label = "Заявки" },
@@ -3628,6 +3704,25 @@ local function categoryLabel(category)
   return "Система"
 end
 
+local function categoryColor(category)
+  if category == "orders" then return colors.lime end
+  if category == "recipes" then return colors.orange end
+  return colors.lightBlue
+end
+
+local function counts()
+  local result = { all = 0, orders = 0, recipes = 0, system = 0 }
+  for _, entry in ipairs(activity.list("all")) do
+    result.all = result.all + 1
+    result[entry.category] = (result[entry.category] or 0) + 1
+  end
+  return result
+end
+
+local function pageSize(height)
+  return math.max(1, height - 7)
+end
+
 local function entries()
   return activity.list(filter)
 end
@@ -3640,41 +3735,52 @@ local function draw()
   ui.button(output, homeX, 1, homeWidth, 1, "", colors.white, colors.blue, true)
   ui.text(output, homeX, 1, homeLabel, colors.white, colors.lightBlue)
 
+  local categoryCounts = counts()
   local tabWidth = math.floor((width - 2) / #filters)
   for index, entry in ipairs(filters) do
     local x = 2 + (index - 1) * tabWidth
     local buttonWidth = index == #filters and width - x - 1 or tabWidth - 1
-    ui.button(output, x, 3, buttonWidth, 1, entry.label, colors.white, colors.blue, filter == entry.id)
+    ui.button(output, x, 3, buttonWidth, 1, entry.label .. ' ' .. tostring(categoryCounts[entry.id] or 0), colors.white, colors.blue, filter == entry.id)
   end
 
   local list = entries()
-  local pages = math.max(1, math.ceil(#list / PAGE_SIZE))
+  local size = pageSize(height)
+  local pages = math.max(1, math.ceil(#list / size))
   if page >= pages then page = pages - 1 end
-  ui.text(output, 2, 5, "Последние события; новые сверху.", colors.lightGray, colors.gray)
-  local first = page * PAGE_SIZE + 1
-  for row = 0, PAGE_SIZE - 1 do
+  ui.line(output, 2, 5, width - 3, 'Последние сверху · автообновление · показано: ' .. tostring(#list), colors.lightGray, colors.gray)
+  local first = page * size + 1
+  for row = 0, size - 1 do
     local entry = list[first + row]
     if entry then
       local y = 6 + row
-      local line = activity.timeLabel(entry.at) .. " " .. categoryLabel(entry.category) .. " · " .. tostring(entry.text)
-      ui.line(output, 2, y, width - 3, line, colors.white, row % 2 == 0 and colors.black or colors.gray)
+      local prefix = activity.timeLabel(entry.at) .. ' · ' .. categoryLabel(entry.category)
+      ui.line(output, 2, y, width - 3, prefix .. ' · ' .. tostring(entry.text), categoryColor(entry.category), row % 2 == 0 and colors.black or colors.gray)
     end
   end
   if #list == 0 then ui.text(output, 2, 7, "Пока нет событий этого типа.", colors.lightGray, colors.gray) end
-  ui.line(output, 1, height - 1, width, "В журнале: " .. tostring(activity.count()) .. "/250", colors.black, colors.lightGray)
-  ui.line(output, 1, height, width, "Стр. " .. tostring(page + 1) .. "/" .. tostring(pages) .. "  Колесо: страницы  F5: обновить", colors.black, colors.lightGray)
+  ui.line(output, 1, height - 1, width, 'В журнале: ' .. tostring(activity.count()) .. '/250  ·  фильтр: ' .. categoryLabel(filter), colors.black, colors.lightGray)
+  ui.line(output, 1, height, width, 'Стр. ' .. tostring(page + 1) .. '/' .. tostring(pages) .. '  1–4: фильтр  End: новые  Колесо: страницы', colors.black, colors.lightGray)
 end
 
 draw()
+refreshTimer = os.startTimer(3)
 while true do
   local event, a, b, c = os.pullEventRaw()
   local width = output.getSize()
   if event == "term_resize" then
     draw()
+  elseif event == "timer" and a == refreshTimer then
+    refreshTimer = os.startTimer(3)
+    draw()
   elseif event == "key" then
     if a == keys.escape or a == keys.q then return end
     if a == keys.up then page = math.max(0, page - 1) end
     if a == keys.down then page = page + 1 end
+    if a == keys['end'] then page = 0 end
+    local numbers = { keys.one, keys.two, keys.three, keys.four }
+    for index, keyCode in ipairs(numbers) do
+      if a == keyCode and filters[index] then filter, page = filters[index].id, 0 end
+    end
     draw()
   elseif event == "mouse_scroll" then
     page = math.max(0, page + (a > 0 and 1 or -1))
@@ -3718,7 +3824,7 @@ local tagSelectMode, tagSelected = false, {}
 local tagInput, tagTargets, tagReturnScreen = "", {}, "list"
 local recipeLogPage = 0
 -- Dense catalog layout deliberately fits a normal 51×19 computer.
-local PAGE_SIZE = 10
+local PAGE_SIZE = 11
 local shiftHeld, metaHeld = false, false
 local russianInput = true
 
@@ -4055,6 +4161,11 @@ end
 local function drawList(width, height)
   header(width, "Реестр рецептов")
   local recipes = filteredRecipes()
+  local total, tagged = 0, 0
+  for _, recipe in ipairs(registry.list()) do
+    total = total + 1
+    if #(recipe.tags or {}) > 0 then tagged = tagged + 1 end
+  end
   ui.text(output, 2, 3, "Поиск: название, ID результата или тег", colors.lightGray, colors.gray)
   ui.line(output, 2, 4, width - 3, ru.fit(recipeSearch .. (searchActive and "|" or ""), width - 3, ""), colors.white, searchActive and colors.blue or colors.black)
   ui.button(output, 2, 5, 10, 1, "+ Новый", colors.white, colors.green, false)
@@ -4062,6 +4173,7 @@ local function drawList(width, height)
   local selectedTags = #selectedTagIds()
   ui.button(output, 27, 5, 12, 1, "Теги: " .. tostring(selectedTags), colors.white, colors.purple, selectedTags > 0)
   ui.button(output, 40, 5, width - 40, 1, "Лог", colors.white, colors.lightBlue, false)
+  ui.line(output, 2, 6, width - 3, 'Рецептов: ' .. tostring(total) .. '  ·  найдено: ' .. tostring(#recipes) .. '  ·  с тегами: ' .. tostring(tagged), colors.lightGray, colors.gray)
   if #recipes == 0 then
     ui.text(output, 2, 8, recipeSearch == "" and "Пока нет рецептов. Начни, например, с рельс." or "Поиск ничего не нашёл.", colors.white, colors.gray)
   else
@@ -4332,6 +4444,7 @@ while true do
         local recipe = filteredRecipes()[selected]
         if recipe and tagSelectMode then tagSelected[recipe.id] = not tagSelected[recipe.id] else openSelected() end
       elseif a == keys.n then resetForm() screen = "edit"
+      elseif a == keys.f then searchActive = true
       elseif a == keys.p then local recipe = filteredRecipes()[selected] if recipe then makePlan(recipe) end
       elseif a == keys.t then tagSelectMode = not tagSelectMode if not tagSelectMode then tagSelected = {} end
       elseif a == keys.g then openTags(selectedTagIds(), "list")
@@ -4505,7 +4618,7 @@ end]====],
   ["/concordos/system/config.lua"] = [====[return {
   name = "ConcordOS",
   country = "Конкордат Фессалоник",
-  version = "0.20.0",
+  version = "0.21.0",
   mainApps = {
     { id = "master", title = "Мастер промзоны", subtitle = "Заявки, склад и сеть Create", path = "/concordos/apps/master_gui.lua", color = colors.red, featured = true },
     { id = "recipes", title = "Реестр рецептов", subtitle = "Технологии и расчёт производства", path = "/concordos/apps/recipes.lua", color = colors.orange },
@@ -4663,7 +4776,7 @@ local function appList()
   if selected > #visible then selected = math.max(1, #visible) end
 end
 
-local SIDEBAR_WIDTH = 12
+local SIDEBAR_WIDTH = 14
 
 local function usesDashboard(output)
   local width, height = output.getSize()
@@ -4679,7 +4792,7 @@ local function appGeometry(output)
     local contentWidth = width - SIDEBAR_WIDTH - 2
     local tileWidth = math.floor((contentWidth - 1) / 2)
     local featured = section == 'main' and visible[1] and visible[1].featured
-    local firstY = featured and 8 or 4
+    local firstY = featured and 10 or 5
     local rows = featured and 3 or 4
     local capacity = featured and (1 + rows * 2) or rows * 2
     return width, height, tileWidth, rows, capacity, firstY, 3, 2, false, false, 2
@@ -4703,7 +4816,7 @@ local function appPosition(output, slot)
   local featured = section == 'main' and visible[1] and visible[1].featured
   if dashboard then
     local contentX, contentWidth = SIDEBAR_WIDTH + 2, width - SIDEBAR_WIDTH - 2
-    if featured and slot == 0 then return contentX, 4, contentWidth, 2 end
+    if featured and slot == 0 then return contentX, 5, contentWidth, 3 end
     local relative = featured and slot - 1 or slot
     return contentX + (relative % 2) * (tileWidth + 1), firstY + math.floor(relative / 2) * step, tileWidth, tileHeight
   end
@@ -4715,15 +4828,17 @@ local function appPosition(output, slot)
   return 2 + column * (tileWidth + 1), firstY + row * step, tileWidth, tileHeight
 end
 
-local function drawAppCard(output, x, y, width, height, app, active)
-  local background = colors.black
+local function drawAppCard(output, x, y, width, height, app, active, shortcut)
+  local background = active and colors.gray or colors.black
   local accent = active and colors.lightBlue or (app.color == colors.black and colors.lightGray or app.color)
   ui.fill(output, x, y, width, height, background)
   ui.fill(output, x, y, 1, height, accent)
-  ui.text(output, x + 2, y, ru.fit(app.title, width - 3), colors.white, background)
+  ui.text(output, x + 2, y, ru.fit(app.title, width - 7), colors.white, background)
+  if shortcut then ui.text(output, x + width - 3, y, '[' .. tostring(shortcut) .. ']', colors.lightGray, background) end
   if height > 1 then
     ui.text(output, x + 2, y + 1, ru.fit(app.subtitle, width - 3), colors.lightGray, background)
   end
+  if height > 2 then ui.text(output, x + 2, y + 2, 'Enter или клик — открыть', accent, background) end
 end
 
 local function backButton(output)
@@ -4747,43 +4862,69 @@ end
 
 local function sidebarSectionAt(x, y)
   if x > SIDEBAR_WIDTH then return nil end
-  if y == 4 then return 'main' end
-  if y == 6 then return 'tools' end
-  if y == 8 then return 'games' end
+  if y == 5 then return 'main' end
+  if y == 7 then return 'tools' end
+  if y == 9 then return 'games' end
 end
 
-local function drawSidebar(output, height)
+local function systemSnapshot()
+  local snapshot = { ticker = peripheral.find('Create_StockTicker') ~= nil, activeGroups = 0, partialGroups = 0, standaloneActive = 0 }
+  local ok, api = pcall(dofile, ROOT .. '/system/lib/orders.lua')
+  if ok and api and api.overview then
+    local overviewOk, overview = pcall(api.overview)
+    if overviewOk and type(overview) == 'table' then
+      snapshot.activeGroups = tonumber(overview.activeGroups) or 0
+      snapshot.partialGroups = tonumber(overview.partialGroups) or 0
+      snapshot.standaloneActive = tonumber(overview.standaloneActive) or 0
+    end
+  end
+  return snapshot
+end
+
+local function drawSidebar(output, height, snapshot)
   ui.fill(output, 1, 2, SIDEBAR_WIDTH, height - 2, colors.black)
-  ui.line(output, 2, 2, SIDEBAR_WIDTH - 2, 'РАЗДЕЛЫ', colors.lightGray, colors.black)
+  ui.line(output, 2, 2, SIDEBAR_WIDTH - 2, 'CONCORDOS', colors.white, colors.black)
+  ui.line(output, 2, 3, SIDEBAR_WIDTH - 2, 'НАВИГАЦИЯ', colors.lightGray, colors.black)
   local entries = {
-    { id = 'main', label = 'Пульт', y = 4 },
-    { id = 'tools', label = 'Сервисы', y = 6 },
-    { id = 'games', label = 'Игры', y = 8 },
+    { id = 'main', label = 'Пульт', y = 5 },
+    { id = 'tools', label = 'Сервисы', y = 7 },
+    { id = 'games', label = 'Игры', y = 9 },
   }
   for _, entry in ipairs(entries) do
     local active = section == entry.id
     local background = active and colors.blue or colors.black
     ui.line(output, 2, entry.y, SIDEBAR_WIDTH - 2, (active and '> ' or '  ') .. entry.label, colors.white, background)
   end
-  ui.line(output, 2, 10, SIDEBAR_WIDTH - 2, string.rep('-', SIDEBAR_WIDTH - 2), colors.darkGray, colors.black)
-  ui.text(output, 2, 12, 'v' .. config.version, colors.lightGray, colors.black)
+  ui.line(output, 2, 11, SIDEBAR_WIDTH - 2, string.rep('-', SIDEBAR_WIDTH - 2), colors.darkGray, colors.black)
+  if height >= 18 then
+    ui.text(output, 2, 13, snapshot.ticker and 'CREATE: ON' or 'CREATE: ---', snapshot.ticker and colors.lime or colors.red, colors.black)
+    local orderText = snapshot.partialGroups > 0 and ('ЧАСТЬ: ' .. tostring(snapshot.partialGroups)) or ('РАБОТА: ' .. tostring(snapshot.activeGroups))
+    ui.text(output, 2, 14, orderText, snapshot.partialGroups > 0 and colors.orange or colors.lightGray, colors.black)
+  end
+  ui.text(output, 2, height - 3, 'Tab: раздел', colors.lightGray, colors.black)
   ui.text(output, 2, height - 2, 'R: reboot', colors.lightGray, colors.black)
+  ui.text(output, 2, height - 1, 'v' .. config.version, colors.lightGray, colors.black)
 end
 
-local function drawDashboard(output, isMonitor, perPage)
+local function drawDashboard(output, isMonitor, perPage, snapshot)
   local width, height = output.getSize()
   local contentX, contentWidth = SIDEBAR_WIDTH + 2, width - SIDEBAR_WIDTH - 2
   local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
   ui.clear(output, colors.gray)
-  ui.line(output, 1, 1, width, config.name .. ' / ' .. config.country, colors.white, colors.blue)
-  drawSidebar(output, height)
-  ui.text(output, contentX, 2, sectionTitle(), colors.white, colors.gray)
-  ui.text(output, contentX, 3, ru.fit('Программ: ' .. tostring(#visible), contentWidth, ''), colors.lightGray, colors.gray)
+  ui.line(output, 1, 1, width, config.name .. '  /  ' .. config.country, colors.white, colors.blue)
+  drawSidebar(output, height, snapshot)
 
   if section == 'main' then
-    ui.line(output, contentX, 7, contentWidth, 'ОСНОВНЫЕ ПРОГРАММЫ', colors.lightGray, colors.gray)
+    ui.text(output, contentX, 2, 'Центр управления', colors.white, colors.gray)
+    ui.text(output, contentX, 3, 'Конкордат Фессалоник · промышленная сеть', colors.lightGray, colors.gray)
+    local network = snapshot.ticker and 'Create подключён' or 'Create не найден'
+    local ordersText = snapshot.partialGroups > 0 and ('частичных: ' .. tostring(snapshot.partialGroups)) or ('в работе: ' .. tostring(snapshot.activeGroups))
+    ui.line(output, contentX, 4, contentWidth, network .. '  ·  стройзаказов ' .. ordersText .. '  ·  обычных: ' .. tostring(snapshot.standaloneActive), snapshot.partialGroups > 0 and colors.orange or (snapshot.ticker and colors.lime or colors.red), colors.gray)
+    ui.line(output, contentX, 9, contentWidth, 'ОСНОВНЫЕ СИСТЕМЫ', colors.lightGray, colors.gray)
   else
-    ui.line(output, contentX, 3, contentWidth, ru.fit('Программ: ' .. tostring(#visible) .. '  |  v' .. config.version, contentWidth, ''), colors.lightGray, colors.gray)
+    ui.text(output, contentX, 2, sectionTitle(), colors.white, colors.gray)
+    ui.line(output, contentX, 3, contentWidth, ru.fit('Программ: ' .. tostring(#visible) .. '  ·  Tab: раздел  ·  Home: пульт', contentWidth, ''), colors.lightGray, colors.gray)
+    ui.line(output, contentX, 4, contentWidth, snapshot.ticker and 'Create: подключён' or 'Create: нет Stock Ticker', snapshot.ticker and colors.lime or colors.red, colors.gray)
   end
   if #visible == 0 then ui.text(output, contentX, 5, 'Приложения пока не найдены.', colors.white, colors.gray) end
 
@@ -4793,22 +4934,22 @@ local function drawDashboard(output, isMonitor, perPage)
     local app = visible[index]
     if app then
       local x, y, cardWidth, cardHeight = appPosition(output, slot)
-      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected)
+      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected, slot + 1)
     end
   end
 
   local controls
   if section == 'main' then
-    controls = isMonitor and 'Клик: открыть' or 'Колесо: листать  Enter: открыть  Q: терминал'
+    controls = isMonitor and 'Клик: открыть  1–9: быстрый запуск' or '1–9: запуск  Колесо: листать  Enter: открыть  Q: терминал'
   else
-    controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
+    controls = isMonitor and 'Клик: открыть  Q: назад' or '1–9: запуск  Колесо: листать  Enter: открыть  Q: назад'
   end
   ui.line(output, 1, height, width, 'Стр. ' .. tostring(page + 1) .. '/' .. tostring(maxPage + 1) .. '  ' .. controls, colors.black, colors.lightGray)
 end
 
-local function drawOutput(output, isMonitor, perPage)
+local function drawOutput(output, isMonitor, perPage, snapshot)
   if usesDashboard(output) then
-    drawDashboard(output, isMonitor, perPage)
+    drawDashboard(output, isMonitor, perPage, snapshot)
     return
   end
 
@@ -4831,7 +4972,7 @@ local function drawOutput(output, isMonitor, perPage)
     local app = visible[index]
     if app then
       local x, y, cardWidth, cardHeight = appPosition(output, slot)
-      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected)
+      drawAppCard(output, x, y, cardWidth, cardHeight, app, index == selected, slot + 1)
     end
   end
   local controls = isMonitor and 'Клик: открыть  Q: назад' or 'Колесо: листать  Enter: открыть  Q: назад'
@@ -4842,8 +4983,9 @@ local function draw()
   local perPage = pageCapacity()
   local maxPage = math.max(0, math.ceil(#visible / perPage) - 1)
   if page > maxPage then page = maxPage end
+  local snapshot = systemSnapshot()
   for _, output in ipairs(outputs) do
-    drawOutput(output, output == monitor, perPage)
+    drawOutput(output, output == monitor, perPage, snapshot)
   end
 end
 
@@ -4884,6 +5026,11 @@ end
 local function selectVertical(delta)
   local columns = select(11, appGeometry(computer))
   selectDelta(delta * columns)
+end
+
+local function quickSlot(keyCode)
+  local keysBySlot = { keys.one, keys.two, keys.three, keys.four, keys.five, keys.six, keys.seven, keys.eight, keys.nine }
+  for index, code in ipairs(keysBySlot) do if keyCode == code then return index end end
 end
 
 draw()
@@ -4931,7 +5078,15 @@ while true do
     selected = math.min(#visible, page * perPage + 1)
     draw()
   elseif event == "key" then
-    if a == keys.enter then
+    local slot = quickSlot(a)
+    if slot and slot <= pageCapacity() then
+      local index = page * pageCapacity() + slot
+      if visible[index] then
+        selected = index
+        launch(index)
+        draw()
+      end
+    elseif a == keys.enter then
       launch(selected)
       draw()
     elseif a == keys.left then selectDelta(-1) draw()
@@ -4939,6 +5094,19 @@ while true do
     elseif a == keys.up then selectVertical(-1) draw()
     elseif a == keys.down then selectVertical(1) draw()
     elseif a == keys.f5 then draw()
+    elseif a == keys.tab then
+      local sections = { 'main', 'tools', 'games' }
+      local current = 1
+      for index, id in ipairs(sections) do if section == id then current = index break end end
+      section = sections[current % #sections + 1]
+      selected, page = 1, 0
+      draw()
+    elseif a == keys.home then
+      section, selected, page = 'main', 1, 0
+      draw()
+    elseif a == keys.backspace and section ~= 'main' then
+      section, selected, page = parentSection(), 1, 0
+      draw()
     elseif a == keys.q then
       if section ~= "main" then
         section = parentSection()

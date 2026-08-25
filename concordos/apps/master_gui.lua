@@ -27,6 +27,7 @@ local GROUP_DETAIL_PAGE_SIZE = 3 -- positions per page
 local groupSearch, groupSearchActive = '', false
 local groupFilter, groupListPage = 'all', 0
 local GROUP_LIST_PAGE_SIZE = 3
+local pendingGroupCancelId = nil
 local auditPage = 0
 local AUDIT_PAGE_SIZE = 3
 
@@ -395,7 +396,8 @@ local function drawOrders(width, height)
       ui.button(output, width - 16, row + 1, 8, 1, 'Состав', colors.white, colors.purple, false)
       if progress.active > 0 then
         ui.button(output, width - 8, row + 1, 3, 1, 'R', colors.white, colors.blue, false)
-        ui.button(output, width - 4, row + 1, 3, 1, 'X', colors.white, colors.red, false)
+        local confirming = pendingGroupCancelId == group.id
+        ui.button(output, width - 4, row + 1, 3, 1, confirming and 'Да' or 'X', colors.white, confirming and colors.orange or colors.red, confirming)
       else
         ui.text(output, width - 8, row + 1, groupStateLabel(progress), groupStateColor(progress), colors.black)
       end
@@ -785,13 +787,21 @@ while true do
             local group = entry.group
             groupSearchActive = false
             if entry.progress.active > 0 and y == row + 1 and x >= width - 8 and x <= width - 6 then
+              pendingGroupCancelId = nil
               if orders.retryGroup(group.id) then
                 pcall(orders.tick)
                 setStatus('Повтор стройки отправлен', colors.lime)
               end
             elseif entry.progress.active > 0 and y == row + 1 and x >= width - 4 then
-              if orders.cancelGroup(group.id) then setStatus('Заказ стройки отменён', colors.orange) end
+              if pendingGroupCancelId == group.id then
+                pendingGroupCancelId = nil
+                if orders.cancelGroup(group.id) then setStatus('Заказ стройки отменён', colors.orange) end
+              else
+                pendingGroupCancelId = group.id
+                setStatus('Нажми «Да» ещё раз для отмены всей стройки', colors.orange)
+              end
             else
+              pendingGroupCancelId = nil
               groupReturnPage = 'orders'
               page, selectedGroupId, groupDetailPage, activeField = 'group', group.id, 0, nil
             end
